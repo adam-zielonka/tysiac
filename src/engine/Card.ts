@@ -160,6 +160,13 @@ for (const color of COLORS) {
 /** Shared immutable instances; every deal uses the same 24 card objects. */
 export const ALL_CARDS: readonly Card[] = ALL
 
+const INDEX = new Map<Card, number>(ALL.map((value, i) => [value, i]))
+
+/** Position in `ALL_CARDS` (♥ ♦ ♣ ♠, each from the ace down); bit index in masks. */
+export function cardIndex(value: Card): number {
+  return INDEX.get(value)!
+}
+
 export function card(figure: Figure, color: Color): Card {
   return BY_ID.get(`${Card.figureToString(figure)}${Card.colorToString(color)}`)!
 }

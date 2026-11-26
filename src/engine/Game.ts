@@ -4,7 +4,7 @@ import { Deck } from './Deck'
 import type { Player } from './Player'
 import { createPlayer, DEFAULT_PLAYERS } from './PlayersSelect'
 import { PlayerType } from './PlayerType'
-import { PLAYER_COUNT, TARGET_SCORE, nextSeat } from './rules'
+import { LOCK_SCORE, PLAYER_COUNT, TARGET_SCORE, nextSeat } from './rules'
 import type { Random } from './random'
 import { SubscribableStore } from './utils'
 
@@ -34,7 +34,10 @@ export interface DealRecord {
   contract: number
   made: boolean
   points: number[]
+  /** Score changes actually written (0 for a locked defender). */
   deltas: number[]
+  /** Defenders at 800+ before the deal: their points were not counted. */
+  locked: boolean[]
   totals: number[]
 }
 
@@ -71,6 +74,7 @@ export class Game extends SubscribableStore {
   /** True while the last completed trick is still shown in the centre. */
   showLastTrick = false
   readonly target = TARGET_SCORE
+  readonly lockScore = LOCK_SCORE
 
   private random: Random
   private timeout: ReturnType<typeof setTimeout> | undefined
@@ -99,6 +103,17 @@ export class Game extends SubscribableStore {
   get leader(): number {
     const best = Math.max(...this.scores)
     return this.scores.indexOf(best)
+  }
+
+  /** Seats at 800+ that currently score only as the declarer. */
+  get lockedSeats(): boolean[] {
+    return this.scores.map(score => score >= this.lockScore)
+  }
+
+  setPace(thinkDelay: number, trickDelay: number): void {
+    this.thinkDelay = thinkDelay
+    this.trickDelay = trickDelay
+    this.notify()
   }
 
   /** Only seat 0 may be a human; it may also be a bot to watch the game. */
@@ -184,8 +199,14 @@ export class Game extends SubscribableStore {
     const events = deal.apply(action)
     events.forEach(event => this.record(event))
     const result = deal.result()
-    if (result) this.finishDeal(result)
-    else if (events.some(event => event.type === 'trick')) this.showLastTrick = true
+    if (result) {
+      // finishDeal starts the timer that hides the final trick; nothing else
+      // is scheduled until the next deal.
+      this.finishDeal(result)
+      this.notify()
+      return true
+    }
+    if (events.some(event => event.type === 'trick')) this.showLastTrick = true
     this.notify()
     this.schedule()
     return true
@@ -217,6 +238,7 @@ export class Game extends SubscribableStore {
     const player = this.players[seat]
     const actions = deal.legalActions()
     let action: Action = actions[0]
+    player.matchScores = this.scores.slice()
     try {
       const view = player.omniscient ? deal.clone() : deal.viewFor(seat)
       action = player.choose(view, actions)
@@ -227,9 +249,19 @@ export class Game extends SubscribableStore {
     this.perform(action)
   }
 
+  /**
+   * Writes the deal. Defenders who had 800+ before it score nothing; the
+   * declarer always scores ± the contract. If anyone reaches 1000, the match
+   * ends: the declarer wins if they reached it, otherwise the highest total
+   * (equal totals share the win).
+   */
   private finishDeal(result: DealResult): void {
     const deal = this.deal!
-    this.scores = this.scores.map((score, seat) => score + result.deltas[seat])
+    const locked = this.scores.map(
+      (score, seat) => seat !== result.declarer && score >= this.lockScore,
+    )
+    const deltas = result.deltas.map((delta, seat) => (locked[seat] ? 0 : delta))
+    this.scores = this.scores.map((score, seat) => score + deltas[seat])
     this.records = [
       ...this.records,
       {
@@ -239,24 +271,35 @@ export class Game extends SubscribableStore {
         contract: result.contract,
         made: result.made,
         points: result.points,
-        deltas: result.deltas,
+        deltas,
+        locked,
         totals: this.scores.slice(),
       },
     ]
     this.log({
       kind: 'result',
       player: result.declarer,
-      value: result.deltas[result.declarer],
+      value: deltas[result.declarer],
       made: result.made,
     })
-    this.showLastTrick = false
     if (this.scores.some(score => score >= this.target)) {
-      const best = Math.max(...this.scores)
-      this.winners = [0, 1, 2].filter(seat => this.scores[seat] === best)
+      if (this.scores[result.declarer] >= this.target) {
+        this.winners = [result.declarer]
+      } else {
+        const best = Math.max(...this.scores)
+        this.winners = [0, 1, 2].filter(seat => this.scores[seat] === best)
+      }
       this.status = 'gameOver'
     } else {
       this.status = 'dealEnd'
     }
+    // Keep the final trick on the table for a moment before the summary.
+    this.showLastTrick = true
+    this.timeout = setTimeout(() => {
+      this.timeout = undefined
+      this.showLastTrick = false
+      this.notify()
+    }, this.trickDelay)
   }
 
   private record(event: DealEvent): void {
@@ -270,7 +313,11 @@ export class Game extends SubscribableStore {
         this.log({ kind: 'pass', player: event.player })
         break
       case 'take':
-        this.log({ kind: 'take', player: event.player, cards: event.cards.map(c => c.id) })
+        this.log({
+          kind: 'take',
+          player: event.player,
+          cards: event.cards.map(c => c.id),
+        })
         break
       case 'give':
         this.log({ kind: 'give', player: event.player, to: event.to })

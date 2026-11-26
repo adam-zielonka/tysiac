@@ -1,4 +1,4 @@
-import { ALL_CARDS, Card, Color, cardById } from './Card'
+import { ALL_CARDS, Card, Color, cardById, cardIndex } from './Card'
 import { Deck } from './Deck'
 import {
   HAND_SIZE,
@@ -100,6 +100,12 @@ export interface DealState {
   played: Play[]
   /** Public inference: `voids[player][color]` after failing to follow or trump. */
   voids: boolean[][]
+  /**
+   * Public inference per player: bit `cardIndex(card)` is set for every card
+   * the player provably does not hold (voids, and cards that would have had
+   * to beat the trick under the overtaking rule). Includes all void suits.
+   */
+  excluded: number[]
   /** Publicly known holders, e.g. the partner of a declared marriage. */
   knownHolders: Record<string, number>
   /** `null` for the full deal, otherwise the seat this view belongs to. */
@@ -184,6 +190,7 @@ export class Deal {
       melds: [],
       played: [],
       voids: emptyVoids(),
+      excluded: [0, 0, 0],
       knownHolders: {},
       viewer: null,
       hiddenCounts: null,
@@ -208,6 +215,7 @@ export class Deal {
       melds: s.melds.slice(),
       played: s.played.slice(),
       voids: s.voids.map(row => row.slice()),
+      excluded: s.excluded.slice(),
       knownHolders: { ...s.knownHolders },
       hiddenCounts: s.hiddenCounts ? s.hiddenCounts.slice() : null,
     })
@@ -311,7 +319,7 @@ export class Deal {
     return (
       s.phase === 'play' &&
       !this.isHidden(s.turn) &&
-      isMeldLead(s.hands[s.turn], card, s.trickNumber, s.trick.length === 0)
+      isMeldLead(s.hands[s.turn], card, s.trick.length === 0)
     )
   }
 
@@ -444,26 +452,48 @@ export class Deal {
     return []
   }
 
+  /**
+   * What a legal follow reveals under the overtaking rule: a player without
+   * the led suit is void in it; one who did not trump has no trump that would
+   * win; one who followed without beating the led-suit winner has no higher
+   * card of that suit.
+   */
+  private inferFromPlay(player: number, card: Card): void {
+    const s = this.s
+    const trick = s.trick.map(play => play.card)
+    const led = trick[0].color
+    const winning = trick[trickWinnerIndex(trick, s.trump)]
+    const exclude = (color: Color, aboveRank = -1) => {
+      for (const other of ALL_CARDS) {
+        if (other.color === color && other.rank > aboveRank) {
+          s.excluded[player] |= 1 << cardIndex(other)
+        }
+      }
+      if (aboveRank < 0) s.voids[player][color] = true
+    }
+    if (card.color !== led) {
+      exclude(led)
+      if (s.trump !== null && s.trump !== led && card.color !== s.trump) {
+        if (winning.color === s.trump) exclude(s.trump, winning.rank)
+        else exclude(s.trump)
+      }
+    } else if (winning.color === led && card.rank < winning.rank) {
+      exclude(led, winning.rank)
+    }
+  }
+
   private playCard(player: number, card: Card): DealEvent[] {
     const s = this.s
     const events: DealEvent[] = []
     const hand = s.hands[player]
-    if (isMeldLead(hand, card, s.trickNumber, s.trick.length === 0)) {
+    if (isMeldLead(hand, card, s.trick.length === 0)) {
       const points = MARRIAGE_POINTS[card.color]
       s.trump = card.color
       s.melds.push({ player, color: card.color, points, trick: s.trickNumber })
       s.knownHolders[card.marriagePartner!.id] = player
       events.push({ type: 'meld', player, color: card.color, points })
     }
-    if (s.trick.length) {
-      const led = s.trick[0].card.color
-      if (card.color !== led) {
-        s.voids[player][led] = true
-        if (s.trump !== null && s.trump !== led && card.color !== s.trump) {
-          s.voids[player][s.trump] = true
-        }
-      }
-    }
+    if (s.trick.length) this.inferFromPlay(player, card)
     hand.splice(hand.indexOf(card), 1)
     delete s.knownHolders[card.id]
     const play = { player, card }

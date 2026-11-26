@@ -6,6 +6,12 @@ export abstract class Player {
   abstract readonly type: PlayerType
   /** Omniscient players receive the full deal instead of their own view. */
   readonly omniscient: boolean = false
+  /**
+   * Match totals before the current deal, set by the game before each
+   * decision (all zero in simulations). Public information: at 800+ a
+   * player scores only as the declarer.
+   */
+  matchScores: number[] = [0, 0, 0]
 
   constructor(
     readonly id: number,

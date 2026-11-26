@@ -9,6 +9,8 @@ export const BID_STEP = 10
 /** Highest declaration possible without a marriage in hand. */
 export const BASE_MAX_BID = 120
 export const TARGET_SCORE = 1000
+/** From this score on, points count only as the declarer. */
+export const LOCK_SCORE = 800
 export const TOTAL_CARD_POINTS = 120
 
 export const MARRIAGE_POINTS: Record<Color, number> = {
@@ -79,8 +81,9 @@ export function trickWinnerIndex(trick: readonly Card[], trump: Color | null): n
 }
 
 /**
- * Follow the led suit when possible. Without it, play a trump if one is
- * declared and held; otherwise any card. Overtaking is not compulsory.
+ * Polish rules: follow the led suit and beat the winning card when possible.
+ * Without the led suit, play a trump that wins the trick if you hold one;
+ * otherwise any card (nobody is forced to under-trump).
  */
 export function legalPlays(
   hand: readonly Card[],
@@ -89,26 +92,31 @@ export function legalPlays(
 ): Card[] {
   if (!trick.length) return [...hand]
   const led = trick[0].color
+  const winning = trick[trickWinnerIndex(trick, trump)]
   const follow = hand.filter(card => card.color === led)
-  if (follow.length) return follow
+  if (follow.length) {
+    const higher = follow.filter(card => beats(card, winning, trump))
+    return higher.length ? higher : follow
+  }
   if (trump !== null) {
-    const trumps = hand.filter(card => card.color === trump)
+    const trumps = hand.filter(
+      card => card.color === trump && beats(card, winning, trump),
+    )
     if (trumps.length) return trumps
   }
   return [...hand]
 }
 
 /**
- * Leading the king or queen of a held marriage declares it, except in the
- * first trick of the deal.
+ * Leading the king or queen of a held marriage declares it, in any trick
+ * including the first one.
  */
 export function isMeldLead(
   hand: readonly Card[],
   card: Card,
-  trickNumber: number,
   isLeading: boolean,
 ): boolean {
-  if (!isLeading || trickNumber === 0 || !card.isMarriageCard) return false
+  if (!isLeading || !card.isMarriageCard) return false
   const partner = card.marriagePartner
   return !!partner && hasCard(hand, card) && hasCard(hand, partner)
 }
