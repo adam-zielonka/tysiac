@@ -1,4 +1,4 @@
-import { Card, Color } from './Card'
+import { ALL_CARDS, Card, Color, cardById } from './Card'
 import { Deck } from './Deck'
 import {
   HAND_SIZE,
@@ -115,9 +115,9 @@ export function actionKey(action: Action): string {
     case 'contract':
       return `${action.type}:${action.value}`
     case 'give':
-      return `give:${action.card.id}:${action.to}`
+      return `give:${action.card?.id}:${action.to}`
     case 'play':
-      return `play:${action.card.id}`
+      return `play:${action.card?.id}`
     default:
       return action.type
   }
@@ -138,9 +138,21 @@ function emptyVoids(): boolean[][] {
 export class Deal {
   constructor(public s: DealState) {}
 
-  static deal(dealer: number, deck: Card[] = Deck.shuffle(Deck.generate())): Deal {
-    if (deck.length !== PLAYER_COUNT * HAND_SIZE + MUSIK_SIZE) {
+  static deal(dealer: number, cards: Card[] = Deck.shuffle(Deck.generate())): Deal {
+    if (!Number.isInteger(dealer) || dealer < 0 || dealer >= PLAYER_COUNT) {
+      throw new Error(`Invalid dealer seat: ${dealer}`)
+    }
+    if (cards.length !== PLAYER_COUNT * HAND_SIZE + MUSIK_SIZE) {
       throw new Error('A Tysiąc deck has 24 cards')
+    }
+    // Engine code compares cards by identity, so map to the shared instances.
+    const deck: Card[] = []
+    for (const value of cards) {
+      const shared = value && cardById(value.id)
+      if (shared) deck.push(shared)
+    }
+    if (new Set(deck).size !== ALL_CARDS.length) {
+      throw new Error('A Tysiąc deck has each of the 24 cards exactly once')
     }
     const hands = Array.from({ length: PLAYER_COUNT }, (_, i) =>
       Card.sortHand(deck.slice(i * HAND_SIZE, (i + 1) * HAND_SIZE)),
@@ -351,15 +363,27 @@ export class Deal {
   }
 
   isLegal(action: Action): boolean {
+    return this.findLegal(action) !== undefined
+  }
+
+  /** The matching legal action (with the shared card instance), if any. */
+  private findLegal(action: Action): Action | undefined {
+    if (!action || typeof action !== 'object' || typeof action.type !== 'string') {
+      return undefined
+    }
     const key = actionKey(action)
-    return this.legalActions().some(legal => actionKey(legal) === key)
+    return this.legalActions().find(legal => actionKey(legal) === key)
   }
 
   /** Applies a legal action for the current player and returns what happened. */
-  apply(action: Action): DealEvent[] {
+  apply(requested: Action): DealEvent[] {
     if (this.isView) throw new Error('Cannot apply actions to a player view')
-    if (!this.isLegal(action)) {
-      throw new Error(`Illegal action ${actionKey(action)} in phase ${this.s.phase}`)
+    // Cards are matched by id; continue with the engine's own card instance.
+    const action = this.findLegal(requested)
+    if (!action) {
+      const key =
+        requested && typeof requested === 'object' ? actionKey(requested) : requested
+      throw new Error(`Illegal action ${String(key)} in phase ${this.s.phase}`)
     }
     const s = this.s
     const player = s.turn
@@ -368,7 +392,10 @@ export class Deal {
         s.bids[player] = action.value
         s.highestBid = action.value
         s.highestBidder = player
-        return [{ type: 'bid', player, value: action.value }, ...this.advanceAuction(player)]
+        return [
+          { type: 'bid', player, value: action.value },
+          ...this.advanceAuction(player),
+        ]
       case 'pass':
         s.bids[player] = 'pass'
         s.passed[player] = true
@@ -450,15 +477,21 @@ export class Deal {
     }
 
     const plays = s.trick
-    const winner = plays[trickWinnerIndex(plays.map(p => p.card), s.trump)].player
-    s.taken[winner].push(...plays.map(p => p.card))
+    const cards = plays.map(p => p.card)
+    const winner = plays[trickWinnerIndex(cards, s.trump)].player
+    s.taken[winner].push(...cards)
     s.tricksWon[winner]++
     s.lastTrick = { plays, winner }
     s.trick = []
     s.trickNumber++
     s.leader = winner
     s.turn = winner
-    events.push({ type: 'trick', player: winner, points: cardPoints(plays.map(p => p.card)), plays })
+    events.push({
+      type: 'trick',
+      player: winner,
+      points: cardPoints(cards),
+      plays,
+    })
 
     if (s.trickNumber === TRICK_COUNT) {
       s.phase = 'finished'
@@ -478,7 +511,15 @@ export class Deal {
     const deltas = points.map((value, p) =>
       p === declarer ? (made ? contract : -contract) : roundScore(value),
     )
-    return { declarer, contract, made, cardPoints: cardPointsList, meldPoints, points, deltas }
+    return {
+      declarer,
+      contract,
+      made,
+      cardPoints: cardPointsList,
+      meldPoints,
+      points,
+      deltas,
+    }
   }
 
   /**
@@ -489,7 +530,7 @@ export class Deal {
   viewFor(seat: number): Deal {
     const view = this.clone()
     const s = view.s
-    s.hiddenCounts = s.hands.map(hand => hand.length)
+    s.hiddenCounts = s.hands.map((_, player) => this.handCount(player))
     s.hands = s.hands.map((hand, player) => (player === seat ? hand : []))
     s.musikCount = s.musik.length
     if (!this.isMusikRevealed) s.musik = []
