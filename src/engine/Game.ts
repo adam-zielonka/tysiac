@@ -1,0 +1,301 @@
+import type { Color } from './Card'
+import { Deal, type Action, type DealEvent, type DealResult } from './Deal'
+import { Deck } from './Deck'
+import type { Player } from './Player'
+import { createPlayer, DEFAULT_PLAYERS } from './PlayersSelect'
+import { PlayerType } from './PlayerType'
+import { PLAYER_COUNT, TARGET_SCORE, nextSeat } from './rules'
+import type { Random } from './random'
+import { SubscribableStore } from './utils'
+
+export type MatchStatus = 'setup' | 'playing' | 'dealEnd' | 'gameOver'
+
+type EntryBase = { id: number; deal: number; player: number }
+export type HistoryEntry = EntryBase &
+  (
+    | { kind: 'deal' }
+    | { kind: 'opening'; value: number }
+    | { kind: 'bid'; value: number }
+    | { kind: 'pass' }
+    | { kind: 'bidWon'; value: number }
+    | { kind: 'take'; cards: string[] }
+    | { kind: 'give'; to: number }
+    | { kind: 'contract'; value: number }
+    | { kind: 'play'; card: string }
+    | { kind: 'meld'; color: Color; value: number }
+    | { kind: 'trick'; value: number }
+    | { kind: 'result'; value: number; made: boolean }
+  )
+
+export interface DealRecord {
+  number: number
+  dealer: number
+  declarer: number
+  contract: number
+  made: boolean
+  points: number[]
+  deltas: number[]
+  totals: number[]
+}
+
+export interface GameOptions {
+  autoStart?: boolean
+  random?: Random
+  players?: readonly PlayerType[]
+  firstDealer?: number
+  thinkDelay?: number
+  trickDelay?: number
+}
+
+const HISTORY_LIMIT = 80
+
+/**
+ * A match to 1000 points: seats, scores and the current deal. Bot moves are
+ * scheduled with timers; the deal itself stays a pure state machine.
+ */
+export class Game extends SubscribableStore {
+  playersSelect: PlayerType[]
+  players: Player[]
+  deal: Deal | null = null
+  status: MatchStatus = 'setup'
+  scores: number[] = [0, 0, 0]
+  records: DealRecord[] = []
+  history: HistoryEntry[] = []
+  dealNumber = 0
+  firstDealer: number
+  winners: number[] = []
+  /** Delay before a bot move, in milliseconds. */
+  thinkDelay = 650
+  /** How long a completed trick stays on the table. */
+  trickDelay = 1100
+  /** True while the last completed trick is still shown in the centre. */
+  showLastTrick = false
+  readonly target = TARGET_SCORE
+
+  private random: Random
+  private timeout: ReturnType<typeof setTimeout> | undefined
+  private entryId = 0
+
+  constructor(options: GameOptions = {}) {
+    super()
+    this.random = options.random ?? Math.random
+    this.firstDealer = options.firstDealer ?? 0
+    if (options.thinkDelay !== undefined) this.thinkDelay = options.thinkDelay
+    if (options.trickDelay !== undefined) this.trickDelay = options.trickDelay
+    this.playersSelect = [...(options.players ?? DEFAULT_PLAYERS)]
+    this.players = this.createPlayers()
+    if (options.autoStart) this.startMatch()
+  }
+
+  get isSetup(): boolean {
+    return this.status === 'setup'
+  }
+
+  /** Seat currently expected to act, or -1. */
+  get turn(): number {
+    return this.status === 'playing' && this.deal ? this.deal.turn : -1
+  }
+
+  get leader(): number {
+    const best = Math.max(...this.scores)
+    return this.scores.indexOf(best)
+  }
+
+  /** Only seat 0 may be a human; it may also be a bot to watch the game. */
+  setPlayer(seat: number, type: PlayerType): boolean {
+    if (this.status !== 'setup' || seat < 0 || seat >= PLAYER_COUNT) return false
+    if (seat !== 0 && type === PlayerType.Human) return false
+    this.playersSelect[seat] = type
+    this.players = this.createPlayers()
+    this.notify()
+    return true
+  }
+
+  startMatch(): void {
+    this.stopTimer()
+    this.scores = [0, 0, 0]
+    this.records = []
+    this.history = []
+    this.winners = []
+    this.dealNumber = 0
+    this.players = this.createPlayers()
+    this.startDeal(this.firstDealer)
+  }
+
+  /** Abandons the match and returns to choosing players. */
+  prepare(): void {
+    this.stopTimer()
+    this.status = 'setup'
+    this.deal = null
+    this.scores = [0, 0, 0]
+    this.records = []
+    this.history = []
+    this.winners = []
+    this.dealNumber = 0
+    this.showLastTrick = false
+    this.notify()
+  }
+
+  nextDeal(): void {
+    if (this.status !== 'dealEnd' || !this.deal) return
+    this.startDeal(nextSeat(this.deal.dealer))
+  }
+
+  /** Legal actions for `seat`, empty when it is not that seat's turn. */
+  actionsFor(seat: number): Action[] {
+    if (this.status !== 'playing' || !this.deal || this.deal.turn !== seat) return []
+    return this.deal.legalActions()
+  }
+
+  /** Interface entry point for the human seat. */
+  act(seat: number, action: Action): boolean {
+    if (this.status !== 'playing' || !this.deal || this.deal.turn !== seat) return false
+    if (!this.players[seat].isHuman) return false
+    return this.perform(action)
+  }
+
+  /** Stops pending bot moves (used by tests and when leaving the page). */
+  stopTimer(): void {
+    if (this.timeout !== undefined) clearTimeout(this.timeout)
+    this.timeout = undefined
+  }
+
+  private createPlayers(): Player[] {
+    return this.playersSelect.map((type, seat) => createPlayer(type, seat, this.random))
+  }
+
+  private startDeal(dealer: number): void {
+    this.stopTimer()
+    this.dealNumber++
+    this.deal = Deal.deal(dealer, Deck.shuffle(Deck.generate(), this.random))
+    this.status = 'playing'
+    this.showLastTrick = false
+    this.log({ kind: 'deal', player: dealer })
+    this.log({ kind: 'opening', player: this.deal.opener, value: this.deal.s.highestBid })
+    this.notify()
+    this.schedule()
+  }
+
+  private perform(action: Action): boolean {
+    const deal = this.deal
+    if (!deal || !deal.isLegal(action)) return false
+    this.stopTimer()
+    this.showLastTrick = false
+    const events = deal.apply(action)
+    events.forEach(event => this.record(event))
+    const result = deal.result()
+    if (result) this.finishDeal(result)
+    else if (events.some(event => event.type === 'trick')) this.showLastTrick = true
+    this.notify()
+    this.schedule()
+    return true
+  }
+
+  private schedule(): void {
+    this.stopTimer()
+    const deal = this.deal
+    if (this.status !== 'playing' || !deal) return
+    const seat = deal.turn
+    const player = this.players[seat]
+    const pause = this.showLastTrick || deal.phase === 'musik'
+    if (player.isHuman) {
+      if (this.showLastTrick) {
+        this.timeout = setTimeout(() => {
+          this.showLastTrick = false
+          this.notify()
+        }, this.trickDelay)
+      }
+      return
+    }
+    const delay = pause ? Math.max(this.thinkDelay, this.trickDelay) : this.thinkDelay
+    this.timeout = setTimeout(() => this.botMove(seat), delay)
+  }
+
+  private botMove(seat: number): void {
+    const deal = this.deal
+    if (!deal || this.status !== 'playing' || deal.turn !== seat) return
+    const player = this.players[seat]
+    const actions = deal.legalActions()
+    let action: Action = actions[0]
+    try {
+      const view = player.omniscient ? deal.clone() : deal.viewFor(seat)
+      action = player.choose(view, actions)
+    } catch (error) {
+      console.error(error)
+    }
+    if (!deal.isLegal(action)) action = actions[0]
+    this.perform(action)
+  }
+
+  private finishDeal(result: DealResult): void {
+    const deal = this.deal!
+    this.scores = this.scores.map((score, seat) => score + result.deltas[seat])
+    this.records = [
+      ...this.records,
+      {
+        number: this.dealNumber,
+        dealer: deal.dealer,
+        declarer: result.declarer,
+        contract: result.contract,
+        made: result.made,
+        points: result.points,
+        deltas: result.deltas,
+        totals: this.scores.slice(),
+      },
+    ]
+    this.log({
+      kind: 'result',
+      player: result.declarer,
+      value: result.deltas[result.declarer],
+      made: result.made,
+    })
+    this.showLastTrick = false
+    if (this.scores.some(score => score >= this.target)) {
+      const best = Math.max(...this.scores)
+      this.winners = [0, 1, 2].filter(seat => this.scores[seat] === best)
+      this.status = 'gameOver'
+    } else {
+      this.status = 'dealEnd'
+    }
+  }
+
+  private record(event: DealEvent): void {
+    switch (event.type) {
+      case 'bid':
+      case 'bidWon':
+      case 'contract':
+        this.log({ kind: event.type, player: event.player, value: event.value })
+        break
+      case 'pass':
+        this.log({ kind: 'pass', player: event.player })
+        break
+      case 'take':
+        this.log({ kind: 'take', player: event.player, cards: event.cards.map(c => c.id) })
+        break
+      case 'give':
+        this.log({ kind: 'give', player: event.player, to: event.to })
+        break
+      case 'play':
+        this.log({ kind: 'play', player: event.player, card: event.card.id })
+        break
+      case 'meld':
+        this.log({
+          kind: 'meld',
+          player: event.player,
+          color: event.color,
+          value: event.points,
+        })
+        break
+      case 'trick':
+        this.log({ kind: 'trick', player: event.player, value: event.points })
+        break
+    }
+  }
+
+  private log(entry: DistributiveOmit<HistoryEntry, 'id' | 'deal'>): void {
+    const full = { ...entry, id: ++this.entryId, deal: this.dealNumber } as HistoryEntry
+    this.history = [...this.history.slice(-(HISTORY_LIMIT - 1)), full]
+  }
+}
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
