@@ -1,19 +1,21 @@
 <script lang="ts">
   import { tr as tx } from '../i18n'
   import { store } from '../engine/Store'
-  import { strategies } from '../engine/strategies'
   import LockIcon from './LockIcon.svelte'
-  import { formatNumber, signed } from './ui'
+  import { formatNumber, seatNames, signed } from './ui'
 
   const { game } = store
 
-  $: nameOf = (seat: number) => $tx(strategies[$game.playersSelect[seat]].name)
+  $: names = seatNames($game.playersSelect, $tx)
+  $: nameOf = (seat: number) => names[seat]
   $: best = Math.max(...$game.scores)
   $: started = $game.status !== 'setup'
   /** Seats that currently score only as the declarer (moot after the match). */
   $: lockedNow =
     started && $game.status !== 'gameOver' ? $game.lockedSeats : [false, false, false]
-  $: lockLabel = $tx('{score}+: punkty tylko jako grający', { score: $game.lockScore })
+  $: lockLabel = $tx('{score}+: punkty tylko jako rozgrywający', {
+    score: $game.lockScore,
+  })
 </script>
 
 <details class="panel score-panel">
@@ -60,8 +62,8 @@
                       points: record.points[seat],
                       lock: lockLabel,
                     })}
-                    ><span aria-hidden="true">0 · <LockIcon />{$game.lockScore}+</span
-                    ><span class="visually-hidden"
+                    ><span aria-hidden="true">0 <LockIcon /></span><span
+                      class="visually-hidden"
                       >{$tx('0, zdobyte {points} pkt bez zapisu — {lock}', {
                         points: record.points[seat],
                         lock: lockLabel,
@@ -181,6 +183,8 @@
     text-align: left;
   }
   thead th {
+    /* Long seat names ("Tosia (z lewej)") wrap instead of widening the table. */
+    white-space: normal;
     position: sticky;
     top: 0;
     background: #121e1a;
@@ -236,7 +240,9 @@
   .summary-totals :global(.lock-icon) {
     margin-left: 2px;
   }
-  .delta.locked :global(.lock-icon),
+  .delta.locked :global(.lock-icon) {
+    margin-left: 2px;
+  }
   .total :global(.lock-icon) {
     margin-right: 2px;
   }
@@ -260,5 +266,18 @@
   }
   .total.leader {
     color: #f1dc8e;
+  }
+  /* All three player columns fit on the narrowest phones, also with locks. */
+  @media (max-width: 360px) {
+    th,
+    td {
+      padding-inline: 3px;
+    }
+    .number {
+      padding-right: 6px;
+    }
+    .contract {
+      min-width: 72px;
+    }
   }
 </style>

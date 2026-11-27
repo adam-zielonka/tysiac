@@ -36,6 +36,8 @@ const uiTranslations: Record<string, string> = {
   'Kliknij kafelek, aby wybrać gracza. Wybierz bota, aby obserwować grę.':
     'Click a tile to choose a player. Choose a bot to watch the game.',
   Wybrany: 'Selected',
+  Szczegóły: 'Details',
+  'Szczegóły: {name}': 'Details: {name}',
   'Znam wszystkie ręce': 'I know all hands',
   // Table
   'Stół do gry': 'Game table',
@@ -62,7 +64,7 @@ const uiTranslations: Record<string, string> = {
   'rozgrywa za {value}': 'declarer, contract {value}',
   'lewy: {count}, punkty: {points}': 'tricks: {count}, points: {points}',
   'myśli…': 'thinking…',
-  '{score}+: punkty tylko jako grający': '{score}+: points only as the declarer',
+  '{score}+: punkty tylko jako rozgrywający': '{score}+: points only as the declarer',
   pas: 'pass',
   // Centre
   'Musik: 3 zakryte karty': 'Musik: 3 face-down cards',
@@ -81,7 +83,7 @@ const uiTranslations: Record<string, string> = {
   'Bierzesz lewę · +{points}': 'You take the trick · +{points}',
   '{name} bierze ostatnią lewę · +{points}': '{name} takes the last trick · +{points}',
   'Bierzesz ostatnią lewę · +{points}': 'You take the last trick · +{points}',
-  '{names} · {score}+: punkty tylko jako grający':
+  '{names} · {score}+: punkty tylko jako rozgrywający':
     '{names} · {score}+: points only as the declarer',
   'Lewa {number} z 8': 'Trick {number} of 8',
   'Meldunek {suit} +{value} · nowy atut': 'Marriage {suit} +{value} · new trump',
@@ -104,7 +106,6 @@ const uiTranslations: Record<string, string> = {
   Meldunki: 'Marriages',
   Zapis: 'Score',
   Razem: 'Total',
-  rozgrywający: 'declarer',
   'Wygrywasz partię!': 'You win the match!',
   'Remis: {names}': 'Tie: {names}',
   'Partię wygrywa {name}': '{name} wins the match',
@@ -144,6 +145,10 @@ const uiTranslations: Record<string, string> = {
   'Trzy karty z musiku trafią do Twojej ręki.': 'The three musik cards go to your hand.',
   'Kliknij kartę, aby ją oddać.': 'Click a card to give it away.',
   'Możesz podnieść kontrakt do {value}.': 'You can raise the contract up to {value}.',
+  'Kontrakt zostaje przy {value} — to Twój limit z meldunkiem.':
+    'The contract stays at {value}, your limit with marriages.',
+  'Kontrakt zostaje przy wylicytowanych {value}.':
+    'The contract stays at your bid of {value}.',
   'Bez meldunku kontrakt zostaje przy {value}.':
     'Without a marriage the contract stays at {value}.',
   'Wyjdź dowolną kartą': 'Lead any card',
@@ -213,8 +218,33 @@ const uiTranslations: Record<string, string> = {
   'zagrywa {card}': 'plays {card}',
   'melduje {suit} +{value}': 'declares {suit} +{value}',
   'bierze lewę (+{value})': 'takes the trick (+{value})',
-  'ugrywa {value}': 'makes {value}',
-  'nie ugrywa {value}': 'fails {value}',
+  'ugrywa {contract} ({delta})': 'makes {contract} ({delta})',
+  'nie ugrywa {contract} ({delta})': 'fails to make {contract} ({delta})',
+  // Activity of the human seat (second person)
+  rozdajesz: 'deal',
+  'otwierasz: {value}': 'open: {value}',
+  'licytujesz {value}': 'bid {value}',
+  pasujesz: 'pass',
+  'wygrywasz licytację: {value}': 'win the auction: {value}',
+  'bierzesz musik': 'take the musik',
+  'oddajesz kartę → {name}': 'give a card → {name}',
+  'grasz za {value}': 'play for {value}',
+  'zagrywasz {card}': 'play {card}',
+  'meldujesz {suit} +{value}': 'declare {suit} +{value}',
+  'bierzesz lewę (+{value})': 'take the trick (+{value})',
+  'ugrywasz {contract} ({delta})': 'make {contract} ({delta})',
+  'nie ugrywasz {contract} ({delta})': 'fail to make {contract} ({delta})',
+  // Announcements for screen readers
+  'Ruchy rywali': 'Rivals’ moves',
+  '{name} oddaje Ci {card}': '{name} gives you {card}',
+  '{name} oddaje kartę: {to}': '{name} gives a card to {to}',
+  '{name} melduje {suit} +{value} · nowy atut':
+    '{name} declares {suit} +{value} · new trump',
+  'Meldujesz {suit} +{value} · nowy atut': 'You declare {suit} +{value} · new trump',
+  // Seats with the same bot
+  '{name} (na dole)': '{name} (bottom)',
+  '{name} (z lewej)': '{name} (left)',
+  '{name} (z prawej)': '{name} (right)',
   // Rules
   'Jak grać w Tysiąca?': 'How do you play Tysiąc?',
   '01 · Talia i rozdanie': '01 · Deck and deal',
@@ -238,9 +268,9 @@ const uiTranslations: Record<string, string> = {
   '07 · Punkty': '07 · Points',
   'Karty: A 11, 10 10, K 4, Q 3, J 2, 9 0 — razem 120. Rozgrywający dostaje +kontrakt, gdy karty i meldunki dadzą co najmniej tyle, inaczej −kontrakt. Obrońcy zapisują swoje punkty zaokrąglone do 10.':
     'Cards: A 11, 10 10, K 4, Q 3, J 2, 9 0 — 120 in total. The declarer scores +contract when cards and marriages reach at least that much, otherwise −contract. Defenders score their own points rounded to the nearest 10.',
-  '08 · Od 800 tylko jako grający': '08 · From 800 only as the declarer',
-  'Od 800 pkt punkty zdobywa się tylko jako grający. Obrońca, który przed rozdaniem ma co najmniej 800, nic nie zapisuje (w wynikach „0 · 800+”), a rozgrywający zawsze dostaje ±kontrakt. Kłódka przy wyniku gracza oznacza tę blokadę. Potocznie bywa to nazywane „beczką”.':
-    'From 800 points on, you score only as the declarer. A defender who has at least 800 before the deal writes nothing (shown as “0 · 800+”), while the declarer always scores ± the contract. A padlock next to a player’s score marks this lock. Players sometimes casually call it the “barrel” (beczka).',
+  '08 · Od 800 tylko jako rozgrywający': '08 · From 800 only as the declarer',
+  'Od 800 pkt punkty zdobywa się tylko jako rozgrywający. Obrońca, który przed rozdaniem ma co najmniej 800, nic nie zapisuje (w tabeli wyników „0” z kłódką), a rozgrywający zawsze dostaje ±kontrakt. Kłódka przy wyniku gracza oznacza tę blokadę. Potocznie bywa to nazywane „beczką”.':
+    'From 800 points on, you score only as the declarer. A defender who has at least 800 before the deal writes nothing (shown as “0” with a padlock), while the declarer always scores ± the contract. A padlock next to a player’s score marks this lock. Players sometimes casually call it the “barrel” (beczka).',
   '09 · Koniec partii': '09 · End of the match',
   'Partia kończy się po rozdaniu, w którym ktoś ma co najmniej 1000 pkt. Jeśli 1000 osiągnie rozgrywający, wygrywa on. W przeciwnym razie wygrywa najwyższy wynik, a remis dzieli zwycięstwo.':
     'The match ends after a deal in which someone has at least 1000 points. If the declarer reaches 1000, the declarer wins. Otherwise the highest total wins, and a tie shares the victory.',

@@ -2,11 +2,22 @@
   import { tr } from '../i18n'
   import { store } from '../engine/Store'
   import { strategies } from '../engine/strategies'
-  import { activityText } from './ui'
+  import { PlayerType } from '../engine/PlayerType'
+  import type { HistoryEntry } from '../engine/Game'
+  import { activityText, seatNames } from './ui'
 
   const { game } = store
 
-  $: nameOf = (seat: number) => $tr(strategies[$game.playersSelect[seat]].name)
+  $: names = seatNames($game.playersSelect, $tr)
+  $: nameOf = (seat: number) => names[seat]
+  /** The human seat's moves read in the second person ("Ty · zagrywasz"). */
+  $: textOf = (entry: HistoryEntry) =>
+    activityText(
+      entry,
+      nameOf,
+      $tr,
+      entry.player === 0 && $game.playersSelect[0] === PlayerType.Human,
+    )
   $: entries = $game.history.slice(-8).reverse()
   $: latest = entries[0]
 </script>
@@ -14,8 +25,7 @@
 <details class="panel activity-panel">
   <summary>
     <span>{$tr('Ostatnie ruchy')}</span>
-    {#if latest}<span class="latest-move"
-        >{nameOf(latest.player)} · {activityText(latest, nameOf, $tr)}</span
+    {#if latest}<span class="latest-move">{nameOf(latest.player)} · {textOf(latest)}</span
       >{/if}
   </summary>
   <ol class="activity-list" aria-label={$tr('Historia ruchów')}>
@@ -23,8 +33,8 @@
       {@const strategy = strategies[$game.playersSelect[entry.player]]}
       <li class="activity-row" class:latest={i === 0}>
         <span class={`activity-dot ${strategy.color}`} aria-hidden="true"></span>
-        <span class="who">{$tr(strategy.name)}</span>
-        <strong>{activityText(entry, nameOf, $tr)}</strong>
+        <span class="who">{nameOf(entry.player)}</span>
+        <strong>{textOf(entry)}</strong>
       </li>
     {:else}
       <li class="activity-row">{$tr('Ruchy pojawią się po rozdaniu kart.')}</li>

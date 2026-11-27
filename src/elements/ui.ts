@@ -1,7 +1,15 @@
 import { Card, type Color } from '../engine/Card'
 import type { Bid, Deal } from '../engine/Deal'
 import type { DealRecord, HistoryEntry } from '../engine/Game'
-import { MARRIAGE_POINTS, beats, legalPlays, trickWinnerIndex } from '../engine/rules'
+import type { PlayerType } from '../engine/PlayerType'
+import {
+  BASE_MAX_BID,
+  MARRIAGE_POINTS,
+  beats,
+  legalPlays,
+  trickWinnerIndex,
+} from '../engine/rules'
+import { strategies } from '../engine/strategies'
 
 export type Translate = (
   source: string,
@@ -16,6 +24,25 @@ export type CardTag = { text: string; kind: 'meld' | 'note' } | null
 /** Seat 0 sits at the bottom; play goes clockwise to the left and then the right seat. */
 export function seatSide(seat: number): Side {
   return seat === 0 ? 'bottom' : seat === 1 ? 'left' : 'right'
+}
+
+/**
+ * Display names of the seats: the translated persona name, with the side of
+ * the table added when two seats share it ("Tosia (z lewej)").
+ */
+export function seatNames(players: readonly PlayerType[], t: Translate): string[] {
+  const names = players.map(type => t(strategies[type].name))
+  return names.map((name, seat) => {
+    if (names.filter(other => other === name).length < 2) return name
+    switch (seatSide(seat)) {
+      case 'bottom':
+        return t('{name} (na dole)', { name })
+      case 'left':
+        return t('{name} (z lewej)', { name })
+      case 'right':
+        return t('{name} (z prawej)', { name })
+    }
+  })
 }
 
 /** Formats a number with a typographic minus sign. */
@@ -75,43 +102,130 @@ export function meldValue(deal: Deal, card: Card): number {
   return deal.isMeld(card) ? MARRIAGE_POINTS[card.color] : 0
 }
 
-/** Translated activity text for a history entry (without the player's name). */
+/**
+ * Translated activity text for a history entry (without the player's name),
+ * in the second person when `you` (the human seat) made the move.
+ */
 export function activityText(
   entry: HistoryEntry,
   name: (seat: number) => string,
   t: Translate,
+  you = false,
 ): string {
   switch (entry.kind) {
     case 'deal':
-      return t('rozdaje')
+      return you ? t('rozdajesz') : t('rozdaje')
     case 'opening':
-      return t('otwiera: {value}', { value: entry.value })
+      return you
+        ? t('otwierasz: {value}', { value: entry.value })
+        : t('otwiera: {value}', { value: entry.value })
     case 'bid':
-      return t('licytuje {value}', { value: entry.value })
+      return you
+        ? t('licytujesz {value}', { value: entry.value })
+        : t('licytuje {value}', { value: entry.value })
     case 'pass':
-      return t('pasuje')
+      return you ? t('pasujesz') : t('pasuje')
     case 'bidWon':
-      return t('wygrywa licytację: {value}', { value: entry.value })
+      return you
+        ? t('wygrywasz licytację: {value}', { value: entry.value })
+        : t('wygrywa licytację: {value}', { value: entry.value })
     case 'take':
-      return t('bierze musik')
+      return you ? t('bierzesz musik') : t('bierze musik')
     case 'give':
-      return t('oddaje kartę → {name}', { name: name(entry.to) })
+      return you
+        ? t('oddajesz kartę → {name}', { name: name(entry.to) })
+        : t('oddaje kartę → {name}', { name: name(entry.to) })
     case 'contract':
-      return t('gra za {value}', { value: entry.value })
+      return you
+        ? t('grasz za {value}', { value: entry.value })
+        : t('gra za {value}', { value: entry.value })
     case 'play':
-      return t('zagrywa {card}', { card: entry.card })
-    case 'meld':
-      return t('melduje {suit} +{value}', {
-        suit: suitText(entry.color),
-        value: entry.value,
-      })
+      return you
+        ? t('zagrywasz {card}', { card: entry.card })
+        : t('zagrywa {card}', { card: entry.card })
+    case 'meld': {
+      const values = { suit: suitText(entry.color), value: entry.value }
+      return you
+        ? t('meldujesz {suit} +{value}', values)
+        : t('melduje {suit} +{value}', values)
+    }
     case 'trick':
-      return t('bierze lewę (+{value})', { value: entry.value })
-    case 'result':
-      return entry.made
-        ? t('ugrywa {value}', { value: formatNumber(entry.value) })
-        : t('nie ugrywa {value}', { value: formatNumber(entry.value) })
+      return you
+        ? t('bierzesz lewę (+{value})', { value: entry.value })
+        : t('bierze lewę (+{value})', { value: entry.value })
+    case 'result': {
+      const values = { contract: entry.contract, delta: signed(entry.value) }
+      if (entry.made)
+        return you
+          ? t('ugrywasz {contract} ({delta})', values)
+          : t('ugrywa {contract} ({delta})', values)
+      return you
+        ? t('nie ugrywasz {contract} ({delta})', values)
+        : t('nie ugrywa {contract} ({delta})', values)
+    }
   }
+}
+
+/**
+ * What a screen reader announces for a new history entry, or `''` for
+ * entries the status line already reports (tricks, the auction winner and
+ * the result) and for moves the human just made. `received` names the card
+ * a rival gave to the human seat; other gifts stay hidden.
+ */
+export function liveText(
+  entry: HistoryEntry,
+  name: (seat: number) => string,
+  t: Translate,
+  you: boolean,
+  received?: string,
+): string {
+  switch (entry.kind) {
+    case 'trick':
+    case 'bidWon':
+    case 'result':
+      return ''
+    case 'bid':
+    case 'pass':
+    case 'take':
+    case 'give':
+    case 'contract':
+    case 'play':
+      if (you) return ''
+  }
+  if (entry.kind === 'give' && received) {
+    return t('{name} oddaje Ci {card}', { name: name(entry.player), card: received })
+  }
+  if (entry.kind === 'give') {
+    return t('{name} oddaje kartę: {to}', {
+      name: name(entry.player),
+      to: name(entry.to),
+    })
+  }
+  if (entry.kind === 'meld') {
+    const values = {
+      name: name(entry.player),
+      suit: suitText(entry.color),
+      value: entry.value,
+    }
+    return you
+      ? t('Meldujesz {suit} +{value} · nowy atut', values)
+      : t('{name} melduje {suit} +{value} · nowy atut', values)
+  }
+  return `${name(entry.player)} ${activityText(entry, name, t, you)}`
+}
+
+/** Hint for the declarer choosing the contract (`deal` in the contract phase). */
+export function contractHint(deal: Deal, t: Translate): string {
+  const options = deal.contractOptions()
+  if (options.length > 1)
+    return t('Możesz podnieść kontrakt do {value}.', { value: options.at(-1)! })
+  const value = options[0]
+  const limit = deal.maxBid(deal.declarer)
+  if (limit <= BASE_MAX_BID)
+    return t('Bez meldunku kontrakt zostaje przy {value}.', { value })
+  if (limit === value)
+    return t('Kontrakt zostaje przy {value} — to Twój limit z meldunkiem.', { value })
+  return t('Kontrakt zostaje przy wylicytowanych {value}.', { value })
 }
 
 /**

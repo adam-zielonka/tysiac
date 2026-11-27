@@ -11,19 +11,20 @@ Projekt wyrósł ze stołu i przeciwników gry [PAN](https://github.com/adam-zie
 
 ## Wybór graczy
 
-Kliknij fotel przy stole, aby otworzyć kafelki przeciwników z opisami ich
-strategii. Skład wybierasz przed partią; „Rozdaj karty” ją rozpoczyna i blokuje
-zmiany. Własny fotel może też zająć bot — wtedy obserwujesz grę. Domyślnie
-grają Tosia i Bruno. „Nowa partia” w trakcie gry prosi o potwierdzenie, bo
-porzuca bieżący wynik.
+Kliknij fotel przy stole, aby otworzyć kafelki przeciwników z krótkim opisem;
+„Szczegóły” rozwijają dokładny opis strategii. Skład wybierasz przed partią;
+„Rozdaj karty” ją rozpoczyna i blokuje zmiany. Własny fotel może też zająć
+bot — wtedy obserwujesz grę. Domyślnie grają Tosia i Bruno. Ten sam bot może siedzieć w kilku fotelach; wtedy jego
+imię uzupełnia strona stołu, np. „Tosia (z lewej)”. „Nowa partia” w trakcie gry
+prosi o potwierdzenie, bo porzuca bieżący wynik.
 
 ## Przeciwnicy
 
 - **Felek — losowy:** pasuje albo podbija o 10 z równą szansą, gra najniższy
   kontrakt, oddaje losowe karty i zagrywa losową dozwoloną kartę.
 - **Bolek — zachłanny:** licytuje do oceny ręki bez zapasu, oddaje karty warte
-  najmniej punktów, wychodzi najsilniejszą kartą i bierze lewę najtańszą
-  wystarczającą kartą.
+  najmniej punktów (asy i karty meldunków tylko w ostateczności), wychodzi
+  najsilniejszą kartą i bierze lewę najtańszą wystarczającą kartą.
 - **Tosia — taktyczna:** licytuje do oceny ręki pomniejszonej o 10 punktów,
   podnosi kontrakt do oceny ośmiu kart minus 30. Pamięta zagrane karty i to,
   czego rywale nie mogą mieć, zgrywa pewne lewy, melduje, ściąga atuty, a w
@@ -33,25 +34,37 @@ porzuca bieżący wynik.
   100 losowych układach ukrytych kart. Licytuje na podstawie 150 symulacji
   (podbija przy co najmniej 60% szans), kontrakt wybiera z 200 symulacji,
   oddawane karty porównuje na 60 układach.
-- **Monte — ISMCTS:** 2000 iteracji przeszukiwania drzewa zbiorów informacji
+- **Monte — ISMCTS:** do 2000 iteracji przeszukiwania drzewa zbiorów informacji
   z UCT; w każdej losuje ukryte karty. Licytuje jak Bruno, ale już przy 55%.
 - **Ada — alfa-beta:** **zna wszystkie ręce i musik** — to celowo jawny wariant
   eksperymentalny. Przeszukuje rozgrywkę (rozgrywający przeciw obu obrońcom)
   do 150 000 pozycji na ruch; od trzeciej lewy zwykle liczy dokładnie do końca.
+  Licytuje i wybiera oddawane karty według krótszego przeszukiwania (18 000
+  pozycji na każdy wariant oddania kart).
 
-Boty znają stan partii: przy 800 punktach licytują śmielej (w obronie nic już
-nie zapiszą), przy dużej przewadze ostrożniej i nie podnoszą kontraktu ponad to,
-co wygrywa partię. Uczciwe boty dostają wyłącznie własny widok rozdania:
-swoją rękę, zagrane karty, odkryty musik, zgłoszone meldunki i karty, których
-ktoś nie może mieć (bo nie dołożył do koloru albo nie przebił). Losowane układy
-są z tym widokiem zgodne. Ocena ręki w licytacji to model liniowy dopasowany do
-40 000 symulowanych rozdań.
+Tosia, Bruno, Monte i Ada znają stan partii. Licytują śmielej, gdy mają już
+800 punktów (w obronie nic nie zapiszą) albo gdy prowadzący w licytacji rywal
+mógłby dojść do 1000, a ostrożniej, gdy mają co najmniej 200 punktów przewagi
+nad obojgiem rywali. Kontraktu nie podnoszą ponad to, co wygrywa partię. Felek
+i Bolek grają bez względu na wynik.
+
+Uczciwe boty dostają wyłącznie własny widok rozdania: swoją rękę, licytację,
+zagrane karty, odkryty musik, zgłoszone meldunki i karty, których ktoś nie może
+mieć (bo nie dołożył do koloru, nie przebił albo wyszedł królem lub damą bez
+meldunku, więc nie ma drugiej karty pary). Losowane układy są z tym widokiem
+zgodne, także z licytacją: kto licytował albo podniósł kontrakt powyżej 120,
+miał meldunki warte co najmniej nadwyżkę. Ocena ręki w licytacji to model
+liniowy dopasowany do 40 000 symulowanych rozdań.
 
 Orientacyjne wyniki z serii 150 rozdań × 3 obroty foteli (średni zapis na
 rozdanie, każdy bot przeciw dwóm Tosiom): Felek −28, Bolek +28, Bruno +48,
 Monte +47, Ada +64. Bruno i Monte mieszczą się w granicach szumu. To pomiary
 na ustalonych ziarnach losowania, nie skalibrowany ranking siły gry.
-Najdłuższa decyzja botów zajmowała w pomiarach około 120 ms czasu procesora.
+Najdłuższe decyzje (Ady) zajmowały w pomiarach na komputerze stacjonarnym
+około 120–150 ms czasu procesora. Każda decyzja Bruna, Montego i Ady ma limit
+250 ms: na wolniejszym urządzeniu przeszukiwanie może się skończyć wcześniej
+(głównie u Ady), więc podane liczby symulacji, iteracji i pozycji to górne
+granice.
 
 ## Zasady tej wersji
 
@@ -61,19 +74,19 @@ Najdłuższa decyzja botów zajmowała w pomiarach około 120 ms czasu procesora
 - **Licytacja:** gracz po rozdającym musi zacząć od 100. Licytuje się
   wielokrotności 10 (można przeskakiwać), pas jest ostateczny. Powyżej 120 tylko
   z meldunkiem w ręce, najwyżej do 120 plus wartość posiadanych meldunków.
-- **Musik:** jest pokazywany wszystkim. Grający bierze go, oddaje po jednej
-  karcie rywalom i może podnieść kontrakt.
+- **Musik:** jest pokazywany wszystkim. Rozgrywający (zwycięzca licytacji)
+  bierze go, oddaje po jednej karcie rywalom i może podnieść kontrakt.
 - **Lewy:** trzeba dołożyć do koloru i przebić, jeśli się da. Bez koloru trzeba
   przebić atutem, jeśli któryś atut wygrywa lewę; nikt nie musi podbijać
-  niższym atutem. Grający wychodzi do pierwszej lewy.
+  niższym atutem. Rozgrywający wychodzi do pierwszej lewy.
 - **Meldunki:** wyjście królem lub damą z pary w ręce — w dowolnej lewie, także
   pierwszej — zgłasza meldunek automatycznie: ♥ 100, ♦ 80, ♣ 60, ♠ 40.
   Jego kolor staje się atutem.
-- **Zapis:** grający dostaje kontrakt, jeśli zdobył co najmniej tyle punktów
+- **Zapis:** rozgrywający dostaje kontrakt, jeśli zdobył co najmniej tyle punktów
   (karty i meldunki), w przeciwnym razie go traci. Obrońcy zapisują swoje
   punkty zaokrąglone do 10 (5 w górę).
-- **Od 800 punktów** punkty zdobywa się tylko jako grający.
-- **Koniec:** gdy ktoś ma co najmniej 1000. Jeśli dotarł do tego grający,
+- **Od 800 punktów** punkty zdobywa się tylko jako rozgrywający.
+- **Koniec:** gdy ktoś ma co najmniej 1000. Jeśli dotarł do tego rozgrywający,
   wygrywa on; w przeciwnym razie wygrywa wyższy wynik (remis dzieli wygraną).
 
 Ta wersja pomija bombę, ponowne rozdanie za cztery dziewiątki, grę we czterech,

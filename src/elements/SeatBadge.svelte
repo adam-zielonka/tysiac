@@ -5,7 +5,7 @@
   import { strategies } from '../engine/strategies'
   import PlayerAvatar from './PlayerAvatar.svelte'
   import LockIcon from './LockIcon.svelte'
-  import { bidText, formatNumber, seatSide } from './ui'
+  import { bidText, formatNumber, seatNames, seatSide } from './ui'
 
   const { game } = store
   export let seat: number
@@ -16,6 +16,8 @@
   $: type = $game.playersSelect[seat]
   $: strategy = strategies[type]
   $: name = $tr(strategy.name)
+  /** With the side added when another seat has the same bot. */
+  $: fullName = seatNames($game.playersSelect, $tr)[seat]
   $: isSetup = $game.status === 'setup'
   $: deal = $game.deal
   $: active = $game.turn === seat
@@ -33,10 +35,12 @@
   $: score = $game.scores[seat]
   /** At 800+ a player scores only as the declarer (moot once the match is over). */
   $: locked = !isSetup && $game.status !== 'gameOver' && $game.lockedSeats[seat]
-  $: lockLabel = $tr('{score}+: punkty tylko jako grający', { score: $game.lockScore })
+  $: lockLabel = $tr('{score}+: punkty tylko jako rozgrywający', {
+    score: $game.lockScore,
+  })
   $: hasMeta = isDealer || isDeclarer || showTricks
   $: description = [
-    name,
+    fullName,
     $tr('{score} pkt', { score: formatNumber(score) }),
     locked ? lockLabel : '',
     isDealer ? $tr('rozdaje') : '',
@@ -71,7 +75,7 @@
     disabled={!isSetup}
     aria-haspopup={isSetup ? 'dialog' : undefined}
     aria-label={isSetup
-      ? $tr('Wybierz gracza: {name} · fotel {seat}', { name, seat: seat + 1 })
+      ? $tr('Wybierz gracza: {name} · fotel {seat}', { name: fullName, seat: seat + 1 })
       : description}
     aria-describedby={knowledge ? `seat-${seat}-bubble` : undefined}
     on:click={() => chooseSeat(seat)}
@@ -412,6 +416,20 @@
     }
     .bubble.knowledge {
       max-width: 140px;
+    }
+  }
+  /* On the narrowest phones the lock sits on the score's divider, so a
+     three-digit locked score leaves room for the name. */
+  @media (max-width: 380px) {
+    .score.locked {
+      position: relative;
+    }
+    .score.locked :global(.lock-icon) {
+      position: absolute;
+      top: -9px;
+      left: -6px;
+      width: 10px;
+      height: 12px;
     }
   }
   @media (prefers-reduced-motion: reduce) {

@@ -238,8 +238,8 @@
       )}
     </p>
     <p>
-      <b>{$tr('08 · Od 800 tylko jako grający')}</b>{$tr(
-        'Od 800 pkt punkty zdobywa się tylko jako grający. Obrońca, który przed rozdaniem ma co najmniej 800, nic nie zapisuje (w wynikach „0 · 800+”), a rozgrywający zawsze dostaje ±kontrakt. Kłódka przy wyniku gracza oznacza tę blokadę. Potocznie bywa to nazywane „beczką”.',
+      <b>{$tr('08 · Od 800 tylko jako rozgrywający')}</b>{$tr(
+        'Od 800 pkt punkty zdobywa się tylko jako rozgrywający. Obrońca, który przed rozdaniem ma co najmniej 800, nic nie zapisuje (w tabeli wyników „0” z kłódką), a rozgrywający zawsze dostaje ±kontrakt. Kłódka przy wyniku gracza oznacza tę blokadę. Potocznie bywa to nazywane „beczką”.',
       )}
     </p>
     <p>

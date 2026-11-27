@@ -51,28 +51,48 @@
   <div class="strategy-grid">
     {#each players as type (type)}
       {@const strategy = strategies[type]}
-      <button
-        type="button"
-        class="strategy-card"
+      {@const id = `picker-${seat}-${type}`}
+      <div
+        class="strategy-option"
         class:seat-option={type === PlayerType.Human}
-        aria-pressed={player === type}
-        on:click={() => choose(type)}
+        class:chosen={player === type}
       >
-        <span class="strategy-heading">
-          <PlayerAvatar {type} />
-          <span class="identity">
-            <span class="name">{$tr(strategy.name)}</span>
-            <span class="method">{$tr(strategy.method)}</span>
+        <button
+          type="button"
+          class="strategy-card"
+          aria-pressed={player === type}
+          aria-label={`${$tr(strategy.name)}, ${$tr(strategy.method)}`}
+          aria-describedby={`${id}-summary ${id}-knowledge`}
+          on:click={() => choose(type)}
+        >
+          <span class="strategy-heading">
+            <PlayerAvatar {type} />
+            <span class="identity">
+              <span class="name">{$tr(strategy.name)}</span>
+              <span class="method">{$tr(strategy.method)}</span>
+            </span>
+            {#if player === type}
+              <span class="selected" aria-hidden="true">{$tr('Wybrany')}</span>
+            {/if}
           </span>
-          {#if player === type}
-            <span class="selected">{$tr('Wybrany')}</span>
-          {/if}
-        </span>
-        <span class="description">{$tr(strategy.description)}</span>
-        <span class="knowledge" class:full-knowledge={type === PlayerType.AZ}>
-          {$tr(strategy.information)}
-        </span>
-      </button>
+          <span class="description" id={`${id}-summary`}>{$tr(strategy.summary)}</span>
+          <span
+            class="knowledge"
+            class:full-knowledge={type === PlayerType.AZ}
+            id={`${id}-knowledge`}
+          >
+            {$tr(strategy.information)}
+          </span>
+        </button>
+        {#if strategy.description !== strategy.summary}
+          <details class="details">
+            <summary aria-label={$tr('Szczegóły: {name}', { name: $tr(strategy.name) })}
+              >{$tr('Szczegóły')}</summary
+            >
+            <p>{$tr(strategy.description)}</p>
+          </details>
+        {/if}
+      </div>
     {/each}
   </div>
 </dialog>
@@ -138,7 +158,29 @@
   .strategy-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
     gap: 12px;
+  }
+  /* The tile: the choice button and, below it, the full description. */
+  .strategy-option {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: #23362a;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    transition:
+      background 150ms,
+      border-color 150ms;
+  }
+  .strategy-option:has(.strategy-card:hover) {
+    background: #304333;
+    border-color: #829576;
+  }
+  .strategy-option.chosen {
+    background: #2b4030;
+    border-color: #c5dda9;
+    box-shadow: inset 0 0 0 1px #c5dda9;
   }
   .strategy-card {
     display: flex;
@@ -148,25 +190,54 @@
     min-height: 44px;
     padding: 14px;
     color: var(--text);
-    background: #23362a;
-    border: 1px solid var(--line);
+    background: transparent;
+    border: 0;
     border-radius: 10px;
     font: inherit;
     text-align: left;
     overflow-wrap: anywhere;
     cursor: pointer;
-    transition:
-      background 150ms,
-      border-color 150ms;
   }
-  .strategy-card:hover {
-    background: #304333;
-    border-color: #829576;
+  /* The tile's button already has bottom padding above the details. */
+  .strategy-card:has(+ .details) {
+    padding-bottom: 4px;
   }
-  .strategy-card[aria-pressed='true'] {
-    background: #2b4030;
-    border-color: #c5dda9;
-    box-shadow: inset 0 0 0 1px #c5dda9;
+  .details {
+    margin: 0 14px 4px;
+    color: #b2c0a8;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .details summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    min-height: 44px;
+    color: #c8d7b9;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+  }
+  .details summary::-webkit-details-marker {
+    display: none;
+  }
+  .details summary::before {
+    content: '▸';
+    color: #9fb29e;
+  }
+  .details[open] summary::before {
+    content: '▾';
+  }
+  .details summary:focus-visible {
+    outline: 2px solid #c5dda9;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .details p {
+    margin: 0;
+    overflow-wrap: anywhere;
   }
   button:focus-visible {
     outline: 2px solid #c5dda9;
@@ -227,6 +298,8 @@
   @media (min-width: 601px) {
     .seat-option {
       grid-column: 1 / -1;
+    }
+    .seat-option .strategy-card {
       display: grid;
       grid-template-columns: minmax(200px, 1fr) 2fr;
       gap: 4px 16px;
@@ -249,12 +322,18 @@
     dialog {
       padding: 0 16px 16px;
     }
+    .strategy-card {
+      padding: 12px;
+    }
+    .details {
+      margin-inline: 12px;
+    }
     .strategy-grid {
       grid-template-columns: minmax(0, 1fr);
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .strategy-card {
+    .strategy-option {
       transition: none;
     }
   }

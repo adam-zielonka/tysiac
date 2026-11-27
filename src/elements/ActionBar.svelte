@@ -1,10 +1,9 @@
 <script lang="ts">
   import { tr } from '../i18n'
   import { store } from '../engine/Store'
-  import { strategies } from '../engine/strategies'
   import { nextSeat } from '../engine/rules'
   import type { Action } from '../engine/Deal'
-  import { nearestOption, stepOption } from './ui'
+  import { nearestOption, seatNames, stepOption } from './ui'
 
   const { game } = store
   /** Recipient of the next card in the giving phase (shared with the hand). */
@@ -21,7 +20,8 @@
   $: phase = deal?.phase
   $: humanTurn =
     $game.status === 'playing' && $game.turn === 0 && $game.players[0].isHuman && !!deal
-  $: nameOf = (seat: number) => $tr(strategies[$game.playersSelect[seat]].name)
+  $: names = seatNames($game.playersSelect, $tr)
+  $: nameOf = (seat: number) => names[seat]
   $: bidOptions = humanTurn && phase === 'bidding' ? deal!.bidOptions() : []
   $: contractOptions = humanTurn && phase === 'contract' ? deal!.contractOptions() : []
   $: resetBid(bidOptions)
@@ -74,14 +74,14 @@
       <button
         type="button"
         aria-label={$tr('Mniej o 10')}
-        disabled={!bidOptions.length || bidValue <= bidOptions[0]}
+        aria-disabled={!bidOptions.length || bidValue <= bidOptions[0]}
         on:click={() => (bidValue = stepOption(bidOptions, bidValue, -1))}>−</button
       >
       <output aria-live="polite">{bidOptions.length ? bidValue : '—'}</output>
       <button
         type="button"
         aria-label={$tr('Więcej o 10')}
-        disabled={!bidOptions.length || bidValue >= (bidOptions.at(-1) ?? 0)}
+        aria-disabled={!bidOptions.length || bidValue >= (bidOptions.at(-1) ?? 0)}
         on:click={() => (bidValue = stepOption(bidOptions, bidValue, 1))}>+</button
       >
     </div>
@@ -121,7 +121,7 @@
       <button
         type="button"
         aria-label={$tr('Mniej o 10')}
-        disabled={contractValue <= (contractOptions[0] ?? 0)}
+        aria-disabled={contractValue <= (contractOptions[0] ?? 0)}
         on:click={() => (contractValue = stepOption(contractOptions, contractValue, -1))}
         >−</button
       >
@@ -129,7 +129,7 @@
       <button
         type="button"
         aria-label={$tr('Więcej o 10')}
-        disabled={contractValue >= (contractOptions.at(-1) ?? 0)}
+        aria-disabled={contractValue >= (contractOptions.at(-1) ?? 0)}
         on:click={() => (contractValue = stepOption(contractOptions, contractValue, 1))}
         >+</button
       >
@@ -175,10 +175,12 @@
     line-height: 1;
     cursor: pointer;
   }
-  .stepper button:hover:not(:disabled) {
+  /* aria-disabled keeps focus on a button at the end of the range (stepping
+     further does nothing), where a disabled button would drop it. */
+  .stepper button:hover:not([aria-disabled='true']) {
     background: #304333;
   }
-  .stepper button:disabled {
+  .stepper button[aria-disabled='true'] {
     opacity: 0.35;
     cursor: default;
   }
