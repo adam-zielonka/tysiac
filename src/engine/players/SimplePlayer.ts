@@ -15,8 +15,9 @@ import { BotPlayer } from './BotPlayer'
 
 /**
  * Bolek, greedy: bids while the hand estimate covers the next bid (no
- * margin), gives away the cards with the fewest points, plays exactly the
- * bid and grabs tricks with the cheapest winning card.
+ * margin), gives away the cards with the fewest points (aces and marriage
+ * cards only when nothing else is left), plays exactly the bid and grabs
+ * tricks with the cheapest winning card.
  */
 export class SimplePlayer extends BotPlayer {
   readonly type = PlayerType.Simple

@@ -23,7 +23,8 @@ Components use Svelte 5 in legacy syntax mode, with the `mount` API at startup.
   machine (auction, musik, gifts, contract, tricks, scoring) without timers.
   `Deal.viewFor(seat)` hides what that seat may not know.
 - `src/engine/sampling.ts` — deals hidden cards consistently with a view
-  (played cards, voids and excluded cards, marriage partners, gifts, musik).
+  (played cards, voids and excluded cards, marriage partners, gifts, musik,
+  and the marriages proven by bids or contracts above 120).
 - `src/engine/Game.ts` — the match to 1000: seats, scores, the 800 lock, bot
   timers and history. It is a Svelte store (`$game`).
 - `src/engine/players/` — the bots, a bitmask play model shared by the
@@ -33,6 +34,6 @@ Components use Svelte 5 in legacy syntax mode, with the `mount` API at startup.
 
 Fair bots receive only `deal.viewFor(seat)`; only Ada is marked `omniscient`
 and receives the full deal. Tests in `src/__tests__/` cover the rules,
-sampling against a brute-force posterior, an independent referee over random
-deals, the match flow with fake timers and every bot in every phase. Bot
+sampling against a brute-force posterior and a replay of the public history,
+an independent referee over random deals, the match flow with fake timers and every bot in every phase. Bot
 timing tests measure CPU time, so they stay meaningful on a busy machine.

@@ -123,6 +123,8 @@ export class AZPlayer extends BotPlayer {
       const value = this.search(st, this.planBudget, false).value
       if (value > best.value) best = { gifts, value }
     }
+    // A plan cut short by the time limit is not reused for later decisions.
+    if (performance.now() > this.deadline) return best
     if (this.plans.size > 16) this.plans.clear()
     this.plans.set(key, best)
     return best

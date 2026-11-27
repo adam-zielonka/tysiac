@@ -1,12 +1,11 @@
 <script lang="ts">
   import { tr } from '../i18n'
   import { store } from '../engine/Store'
-  import { strategies } from '../engine/strategies'
   import { PlayerType } from '../engine/PlayerType'
   import { cardPoints } from '../engine/rules'
   import CardElement from './CardElement.svelte'
   import DealSummary from './DealSummary.svelte'
-  import { seatSide, suitText } from './ui'
+  import { seatNames, seatSide, suitText } from './ui'
 
   const { game } = store
 
@@ -14,7 +13,8 @@
   $: status = $game.status
   $: phase = deal?.phase
   $: finished = status === 'dealEnd' || status === 'gameOver'
-  $: nameOf = (seat: number) => $tr(strategies[$game.playersSelect[seat]].name)
+  $: names = seatNames($game.playersSelect, $tr)
+  $: nameOf = (seat: number) => names[seat]
   $: lastTrick = $game.showLastTrick ? deal?.s.lastTrick : null
   $: plays = lastTrick ? lastTrick.plays : (deal?.trick ?? [])
   $: winner = lastTrick ? lastTrick.winner : -1

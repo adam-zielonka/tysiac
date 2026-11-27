@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { cards } from '../../engine/Card'
+import { Figure, cards, type Card } from '../../engine/Card'
+import { Deck } from '../../engine/Deck'
+import { seededRandom } from '../../engine/random'
 import type { Action } from '../../engine/Deal'
 import { PlayerType } from '../../engine/PlayerType'
 import { cardAt, cardIndex, isMarriageCard, maskOf } from '../../engine/players/bits'
@@ -146,6 +148,40 @@ describe('gifts and estimates', () => {
     const [first, second] = giftOrder(hand).map(card => cardAt(card).id)
     expect(['9♦', 'J♦', '9♠', 'J♣']).toContain(first)
     expect(['9♦', 'J♦', '9♠', 'J♣']).toContain(second)
+  })
+
+  it('gives a lone king or queen only after nines, jacks and short unguarded tens', () => {
+    // As Tosia's description says; longer unguarded tens may still go first.
+    const random = seededRandom(7)
+    for (let n = 0; n < 2000; n++) {
+      const hand = Deck.shuffle(Deck.generate(), random).slice(0, 10)
+      const order = giftOrder(maskOf(hand)).map(cardAt)
+      const inSuit = (card: Card) => hand.filter(c => c.color === card.color)
+      const lone = (card: Card) =>
+        card.isMarriageCard && !inSuit(card).includes(card.marriagePartner!)
+      const cheap = (card: Card) =>
+        card.figure === Figure.f9 ||
+        card.figure === Figure.J ||
+        (card.figure === Figure.f10 &&
+          inSuit(card).length < 3 &&
+          !inSuit(card).some(c => c.figure === Figure.A))
+      const firstLone = order.findIndex(lone)
+      if (firstLone < 0) continue
+      expect(order.slice(firstLone).some(cheap), order.map(c => c.id).join(' ')).toBe(
+        false,
+      )
+    }
+    // Bolek's gifts keep a marriage although a ten is worth more points.
+    const deal = dealOf(
+      ['A♥ 10♥ K♥ Q♥ A♣ 10♣ A♦', '9♥ J♦ 9♦ J♣ 9♣ J♠ 9♠', 'J♥ K♦ Q♦ K♣ Q♣ K♠ Q♠'],
+      '10♦ A♠ 10♠',
+      2,
+    )
+    deal.apply({ type: 'pass' })
+    deal.apply({ type: 'pass' })
+    deal.apply({ type: 'take' })
+    const gift = decide(deal, bot(PlayerType.Simple, 0))
+    expect(gift.type === 'give' && gift.card.figure).toBe(Figure.f10)
   })
 
   it('values aces, tens and marriages', () => {

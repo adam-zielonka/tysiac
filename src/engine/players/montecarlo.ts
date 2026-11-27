@@ -184,7 +184,10 @@ export function monteCarloGift(
   const bid = view.s.highestBid
   let chosen = options[0]
   let top = -Infinity
+  let tried = 0
   for (const option of options) {
+    // Out of time: keep the best option found so far.
+    if (tried++ && pastDeadline(deadline)) break
     let kept = hand
     for (const card of option) kept &= ~(1 << card)
     const outcomes = layouts.map(layout => {

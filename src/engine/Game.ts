@@ -24,7 +24,7 @@ export type HistoryEntry = EntryBase &
     | { kind: 'play'; card: string }
     | { kind: 'meld'; color: Color; value: number }
     | { kind: 'trick'; value: number }
-    | { kind: 'result'; value: number; made: boolean }
+    | { kind: 'result'; value: number; contract: number; made: boolean }
   )
 
 export interface DealRecord {
@@ -298,6 +298,7 @@ export class Game extends SubscribableStore {
       kind: 'result',
       player: result.declarer,
       value: deltas[result.declarer],
+      contract: result.contract,
       made: result.made,
     })
     if (this.scores.some(score => score >= this.target)) {

@@ -15,6 +15,7 @@ import {
   beats,
   bidRange,
   cardPoints,
+  excludedByLead,
   excludedByPlay,
   hasCard,
   isMeldLead,
@@ -272,6 +273,20 @@ describe('rules', () => {
         }
       }
       expect(checked).toBeGreaterThan(2000)
+    })
+  })
+
+  describe('excludedByLead', () => {
+    it('shows the missing partner of a king or queen led without a marriage', () => {
+      // Declaring is automatic, so a lone K or Q proves the partner is elsewhere.
+      expect(maskIds(excludedByLead(cards('K♠ A♥ 10♥'), cards('K♠')[0]))).toBe('Q♠')
+      expect(maskIds(excludedByLead(cards('Q♦ 9♦'), cards('Q♦')[0]))).toBe('K♦')
+      // A declared marriage and other cards reveal nothing.
+      expect(excludedByLead(cards('K♠ Q♠ A♥'), cards('K♠')[0])).toBe(0)
+      expect(excludedByLead(cards('K♠ Q♠ A♥'), cards('Q♠')[0])).toBe(0)
+      for (const card of cards('A♥ 10♥ J♥ 9♥')) {
+        expect(excludedByLead(cards('A♥ 10♥ J♥ 9♥'), card)).toBe(0)
+      }
     })
   })
 

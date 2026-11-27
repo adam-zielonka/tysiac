@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { Color, cards } from '../engine/Card'
 import { Deal } from '../engine/Deal'
 import type { DealRecord, HistoryEntry } from '../engine/Game'
+import { PlayerType } from '../engine/PlayerType'
 import {
   activityText,
   bidText,
+  contractHint,
+  liveText,
+  seatNames,
   formatNumber,
   joinNames,
   matchEnd,
@@ -87,6 +91,21 @@ describe('seats and numbers', () => {
     ])
   })
 
+  it('tells seats with the same bot apart by their side', () => {
+    const { Human, Tactical, Rollout } = PlayerType
+    expect(seatNames([Human, Tactical, Rollout], t)).toEqual(['Ty', 'Tosia', 'Bruno'])
+    expect(seatNames([Human, Tactical, Tactical], t)).toEqual([
+      'Ty',
+      'Tosia (z lewej)',
+      'Tosia (z prawej)',
+    ])
+    expect(seatNames([Rollout, Tactical, Rollout], t)).toEqual([
+      'Bruno (na dole)',
+      'Tosia',
+      'Bruno (z prawej)',
+    ])
+  })
+
   it('joins names with a translated conjunction', () => {
     expect(joinNames([], t)).toBe('')
     expect(joinNames(['Ada'], t)).toBe('Ada')
@@ -109,11 +128,67 @@ describe('activity texts', () => {
     [{ ...base, kind: 'play', card: 'A♥' }, 'zagrywa A♥'],
     [{ ...base, kind: 'meld', color: Color.Kier, value: 100 }, 'melduje ♥ +100'],
     [{ ...base, kind: 'trick', value: 21 }, 'bierze lewę (+21)'],
-    [{ ...base, kind: 'result', value: 120, made: true }, 'ugrywa 120'],
-    [{ ...base, kind: 'result', value: -120, made: false }, 'nie ugrywa −120'],
+    [
+      { ...base, kind: 'result', value: 120, contract: 120, made: true },
+      'ugrywa 120 (+120)',
+    ],
+    [
+      { ...base, kind: 'result', value: -120, contract: 120, made: false },
+      'nie ugrywa 120 (−120)',
+    ],
   ]
   it.each(cases)('describes %o', (entry, text) => {
     expect(activityText(entry, name, t)).toBe(text)
+  })
+
+  const yourCases: [HistoryEntry, string][] = [
+    [{ ...base, kind: 'deal' }, 'rozdajesz'],
+    [{ ...base, kind: 'opening', value: 100 }, 'otwierasz: 100'],
+    [{ ...base, kind: 'bid', value: 110 }, 'licytujesz 110'],
+    [{ ...base, kind: 'pass' }, 'pasujesz'],
+    [{ ...base, kind: 'bidWon', value: 120 }, 'wygrywasz licytację: 120'],
+    [{ ...base, kind: 'take', cards: ['A♥', '9♠', 'K♦'] }, 'bierzesz musik'],
+    [{ ...base, kind: 'give', to: 2 }, 'oddajesz kartę → Bruno'],
+    [{ ...base, kind: 'contract', value: 120 }, 'grasz za 120'],
+    [{ ...base, kind: 'play', card: 'A♥' }, 'zagrywasz A♥'],
+    [{ ...base, kind: 'meld', color: Color.Kier, value: 100 }, 'meldujesz ♥ +100'],
+    [{ ...base, kind: 'trick', value: 21 }, 'bierzesz lewę (+21)'],
+    [
+      { ...base, kind: 'result', value: 120, contract: 120, made: true },
+      'ugrywasz 120 (+120)',
+    ],
+    [
+      { ...base, kind: 'result', value: -120, contract: 120, made: false },
+      'nie ugrywasz 120 (−120)',
+    ],
+  ]
+  it.each(yourCases)('speaks to the human seat: %o', (entry, text) => {
+    expect(activityText(entry, name, t, true)).toBe(text)
+  })
+
+  it('announces the rivals’ moves, but not what the status line says', () => {
+    const live = (entry: HistoryEntry, you = false, received?: string) =>
+      liveText(entry, name, t, you, received)
+    expect(live({ ...base, kind: 'pass' })).toBe('Tosia pasuje')
+    expect(live({ ...base, kind: 'contract', value: 130 })).toBe('Tosia gra za 130')
+    expect(live({ ...base, kind: 'play', card: 'K♠' })).toBe('Tosia zagrywa K♠')
+    expect(live({ ...base, kind: 'meld', color: Color.Kier, value: 100 })).toBe(
+      'Tosia melduje ♥ +100 · nowy atut',
+    )
+    // Only a card given to the human is named.
+    expect(live({ ...base, kind: 'give', to: 0 }, false, 'K♦')).toBe('Tosia oddaje Ci K♦')
+    expect(live({ ...base, kind: 'give', to: 2 })).toBe('Tosia oddaje kartę: Bruno')
+    expect(live({ ...base, kind: 'trick', value: 21 })).toBe('')
+    expect(live({ ...base, kind: 'bidWon', value: 120 })).toBe('')
+    expect(live({ ...base, kind: 'result', value: 120, contract: 120, made: true })).toBe(
+      '',
+    )
+    // The human's own moves are not repeated; an automatic marriage is.
+    expect(live({ ...base, kind: 'play', card: 'K♠' }, true)).toBe('')
+    expect(live({ ...base, kind: 'bid', value: 110 }, true)).toBe('')
+    expect(live({ ...base, kind: 'meld', color: Color.Pik, value: 40 }, true)).toBe(
+      'Meldujesz ♠ +40 · nowy atut',
+    )
   })
 
   it('shows auction bubbles', () => {
@@ -186,6 +261,56 @@ describe('play rules', () => {
       beat: card('Q♥'),
       reason: 'lowTrumps',
     })
+  })
+})
+
+describe('contract hints', () => {
+  const RIVALS = ['9♥ J♦ 9♦ J♣ 9♣ J♠ 9♠', 'A♦ 10♦ A♣ 10♣ 10♥ A♥ Q♣']
+  /** Seat 0 outbids seat 1 with `bid`, takes the musik and gives two cards. */
+  function contractDeal(hands: string[], musik: string, bid: number, gifts: string[]) {
+    const deal = dealFor(hands, musik)
+    deal.apply({ type: 'bid', value: 110 })
+    deal.apply({ type: 'pass' })
+    deal.apply({ type: 'bid', value: bid })
+    deal.apply({ type: 'pass' })
+    deal.apply({ type: 'take' })
+    deal.apply({ type: 'give', card: cards(gifts[0])[0], to: 1 })
+    deal.apply({ type: 'give', card: cards(gifts[1])[0], to: 2 })
+    return deal
+  }
+
+  it('explains why the contract cannot be raised', () => {
+    // Bid up to the ♠ limit of 160; the musik marriages were given away.
+    const atLimit = contractDeal(['K♠ Q♠ A♠ 10♠ K♥ K♦ K♣', ...RIVALS], 'Q♥ J♥ Q♦', 160, [
+      'Q♥',
+      'Q♦',
+    ])
+    expect(atLimit.contractOptions()).toEqual([160])
+    expect(contractHint(atLimit, t)).toBe(
+      'Kontrakt zostaje przy 160 — to Twój limit z meldunkiem.',
+    )
+    // The ♦ marriage given away after bidding 200: ♠ alone allows only 160.
+    const above = contractDeal(['K♠ Q♠ A♠ 10♠ K♦ Q♦ J♥', ...RIVALS], 'K♥ Q♥ K♣', 200, [
+      'Q♦',
+      'Q♥',
+    ])
+    expect(above.contractOptions()).toEqual([200])
+    expect(contractHint(above, t)).toBe('Kontrakt zostaje przy wylicytowanych 200.')
+    // No marriage at all.
+    const none = contractDeal(
+      ['A♠ 10♠ J♥ 9♥ J♦ 9♦ K♠', 'K♥ Q♥ K♦ Q♦ 9♣ J♠ 9♠', RIVALS[1]],
+      'J♣ K♣ Q♠',
+      120,
+      ['Q♠', 'J♣'],
+    )
+    expect(none.contractOptions()).toEqual([120])
+    expect(contractHint(none, t)).toBe('Bez meldunku kontrakt zostaje przy 120.')
+    // Room to raise.
+    const raise = contractDeal(['K♠ Q♠ A♠ 10♠ K♥ J♥ Q♦', ...RIVALS], 'Q♥ K♦ K♣', 120, [
+      'J♥',
+      'K♣',
+    ])
+    expect(contractHint(raise, t)).toBe('Możesz podnieść kontrakt do 340.')
   })
 })
 

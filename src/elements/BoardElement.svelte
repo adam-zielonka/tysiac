@@ -2,9 +2,9 @@
   import { tick } from 'svelte'
   import { tr } from '../i18n'
   import type { Card } from '../engine/Card'
+  import type { HistoryEntry } from '../engine/Game'
   import { store } from '../engine/Store'
   import { PlayerType } from '../engine/PlayerType'
-  import { strategies } from '../engine/strategies'
   import { BASE_MAX_BID, cardPoints } from '../engine/rules'
   import PlayerElement from './PlayerElement.svelte'
   import SeatBadge from './SeatBadge.svelte'
@@ -12,10 +12,13 @@
   import ActionBar from './ActionBar.svelte'
   import LockIcon from './LockIcon.svelte'
   import {
+    contractHint,
     joinNames,
+    liveText,
     meldValue,
     playHint,
     pluralForm,
+    seatNames,
     suitText,
     type CardTag,
   } from './ui'
@@ -26,6 +29,7 @@
 
   let giftTarget = -1
   let yourArea: HTMLElement
+  let felt: HTMLElement
 
   /** Keeps keyboard focus in your area when the pressed control disappears. */
   async function keepFocus(): Promise<void> {
@@ -41,7 +45,8 @@
   $: me = $game.players[0]
   $: watching = me.type !== PlayerType.Human
   $: humanTurn = playing && $game.turn === 0 && !watching && !!deal
-  $: nameOf = (seat: number) => $tr(strategies[$game.playersSelect[seat]].name)
+  $: names = seatNames($game.playersSelect, $tr)
+  $: nameOf = (seat: number) => names[seat]
   $: myHand = deal ? deal.hand(0) : []
   $: playable = humanTurn && phase === 'play' ? deal!.playableCards() : []
   $: received =
@@ -164,12 +169,8 @@
         return $tr('Trzy karty z musiku trafią do Twojej ręki.')
       case 'giving':
         return $tr('Kliknij kartę, aby ją oddać.')
-      case 'contract': {
-        const options = deal.contractOptions()
-        return options.length > 1
-          ? $tr('Możesz podnieść kontrakt do {value}.', { value: options.at(-1)! })
-          : $tr('Bez meldunku kontrakt zostaje przy {value}.', { value: options[0] })
-      }
+      case 'contract':
+        return contractHint(deal, $tr)
       case 'play':
         return playHint(deal, $tr)
       default:
@@ -219,7 +220,8 @@
     return null
   }
 
-  function cardLabel(card: Card): string {
+  // Reactive, so the labels follow the chosen recipient and the language.
+  $: cardLabel = (card: Card): string => {
     const parts = [card.text]
     if (received === card) parts.push($tr('otrzymana'))
     if (fromMusik.includes(card)) parts.push($tr('z musiku'))
@@ -235,6 +237,53 @@
         parts.push($tr('meldunek {suit} +{value}', { suit: card.colorText, value }))
     }
     return parts.join(' — ')
+  }
+
+  /** The latest moves for screen readers (the status line has the rest). */
+  let announcements: { id: number; text: string }[] = []
+  let announcedId = game.history.at(-1)?.id ?? 0
+  $: announce($game.history)
+
+  function announce(history: readonly HistoryEntry[]): void {
+    const last = history.at(-1)?.id ?? 0
+    if (last < announcedId || !history.length) {
+      // A new match: drop the old announcements.
+      announcements = []
+      announcedId = last
+      return
+    }
+    const fresh = history.filter(entry => entry.id > announcedId)
+    announcedId = last
+    const human = $game.playersSelect[0] === PlayerType.Human
+    const texts = fresh
+      .map(entry => {
+        const you = human && entry.player === 0
+        const received =
+          human && entry.kind === 'give' && entry.to === 0
+            ? game.deal?.s.gifts.find(gift => gift.to === 0)?.card.text
+            : undefined
+        return liveText(entry, nameOf, $tr, you, received)
+      })
+      .filter(Boolean)
+    if (texts.length) {
+      announcements = [...announcements.slice(-4), { id: last, text: texts.join('. ') }]
+    }
+  }
+
+  /** Moves keyboard focus to the summary's button once the summary appears. */
+  let summaryShown = false
+  $: showSummary = dealOver && !finalTrick
+  $: if (showSummary !== summaryShown) {
+    summaryShown = showSummary
+    if (showSummary) focusSummary()
+  }
+
+  async function focusSummary(): Promise<void> {
+    await tick()
+    const active = document.activeElement
+    // Never take focus from the header, the panels or an open dialog.
+    if (active && active !== document.body && !yourArea?.contains(active)) return
+    felt?.querySelector<HTMLElement>('.summary .button.primary')?.focus()
   }
 
   function handCards(seat: number, visible: boolean): (Card | null)[] {
@@ -257,7 +306,7 @@
     </div>
     <div class="target">{$tr('GRA DO {target}', { target: $game.target })}</div>
   </div>
-  <div class="felt" class:finished={dealOver && !finalTrick}>
+  <div class="felt" class:finished={dealOver && !finalTrick} bind:this={felt}>
     <div class="table-outline"></div>
     <div class="felt-mark" aria-hidden="true">
       1000<small>{$tr('TYSIĄC · GRA KARCIANA')}</small>
@@ -292,7 +341,7 @@
           {#if lockedNames.length}
             <span class="info-chip lock-chip"
               ><LockIcon />
-              {$tr('{names} · {score}+: punkty tylko jako grający', {
+              {$tr('{names} · {score}+: punkty tylko jako rozgrywający', {
                 names: joinNames(lockedNames, $tr),
                 score: $game.lockScore,
               })}</span
@@ -330,6 +379,11 @@
     tabindex="-1"
     bind:this={yourArea}
   >
+    <div class="visually-hidden" role="log" aria-label={$tr('Ruchy rywali')}>
+      {#each announcements as announcement (announcement.id)}
+        <p>{announcement.text}</p>
+      {/each}
+    </div>
     <div class="turn-line">
       <div class="turn-status" role="status" aria-live="polite">
         <span class:your-turn={humanTurn} class="status-dot"></span>
@@ -535,6 +589,14 @@
   .placeholder {
     visibility: hidden;
   }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
   .your-area {
     outline: none;
     min-width: 0;
@@ -697,6 +759,19 @@
       grid-row: 2;
       justify-self: center;
       font-size: 12px;
+    }
+  }
+  /* The three-column felt leaves the summary too narrow: give it the width. */
+  @media (min-width: 761px) and (max-width: 900px) {
+    .felt.finished {
+      grid-template-rows: auto auto auto;
+    }
+    .finished .center {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .finished .table-info {
+      grid-row: 3;
     }
   }
   @media (max-width: 600px) {

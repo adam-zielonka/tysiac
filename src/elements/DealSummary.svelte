@@ -1,10 +1,9 @@
 <script lang="ts">
   import { tr as tx } from '../i18n'
   import { store } from '../engine/Store'
-  import { strategies } from '../engine/strategies'
   import { PlayerType } from '../engine/PlayerType'
   import LockIcon from './LockIcon.svelte'
-  import { formatNumber, joinNames, matchEnd, signed } from './ui'
+  import { formatNumber, joinNames, matchEnd, seatNames, signed } from './ui'
 
   const { game } = store
 
@@ -14,9 +13,12 @@
   $: deltas = record?.deltas ?? result?.deltas ?? [0, 0, 0]
   $: locked = record?.locked ?? [false, false, false]
   $: anyLocked = locked.some(Boolean)
-  $: lockLabel = $tx('{score}+: punkty tylko jako grający', { score: $game.lockScore })
+  $: lockLabel = $tx('{score}+: punkty tylko jako rozgrywający', {
+    score: $game.lockScore,
+  })
   $: gameOver = $game.status === 'gameOver'
-  $: nameOf = (seat: number) => $tx(strategies[$game.playersSelect[seat]].name)
+  $: names = seatNames($game.playersSelect, $tx)
+  $: nameOf = (seat: number) => names[seat]
   $: humanWins =
     $game.winners.length === 1 &&
     $game.winners[0] === 0 &&
@@ -87,13 +89,15 @@
                   aria-hidden="true"
                 >
                   ★</span
-                ><span class="visually-hidden"> ({$tx('rozgrywający')})</span>{/if}</th
+                ><span class="visually-hidden">
+                  ({$tx('gra za {value}', { value: result.contract })})</span
+                >{/if}</th
             >
             <td>{result.cardPoints[seat]}</td>
             <td>{result.meldPoints[seat] || '–'}</td>
             {#if locked[seat]}
               <td class="delta locked" title={lockLabel}
-                ><span aria-hidden="true">0 · <LockIcon />{$game.lockScore}+</span><span
+                ><span aria-hidden="true">0 <LockIcon /></span><span
                   class="visually-hidden">0, {lockLabel}</span
                 ></td
               >
@@ -205,6 +209,8 @@
   tbody th {
     color: #e2eadb;
     font-weight: 600;
+    /* "Tosia (z lewej)" wraps instead of widening the table. */
+    white-space: normal;
   }
   td {
     color: #c8d6c2;
@@ -225,7 +231,7 @@
     color: #f1dc8e;
   }
   .delta.locked :global(.lock-icon) {
-    margin-right: 2px;
+    margin-left: 2px;
   }
   .total {
     color: #f0f3e6;

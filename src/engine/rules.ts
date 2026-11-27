@@ -1,4 +1,4 @@
-import { COLORS, Color, Figure, suitMask, type Card } from './Card'
+import { COLORS, Color, Figure, cardIndex, suitMask, type Card } from './Card'
 
 export const PLAYER_COUNT = 3
 export const HAND_SIZE = 7
@@ -127,13 +127,24 @@ export function isMeldLead(
 }
 
 /**
+ * Public inference from a lead: declaring is automatic, so a king or queen led
+ * without declaring its marriage shows that the leader does not hold the
+ * partner (the mask of that one card). Any other lead reveals nothing.
+ */
+export function excludedByLead(hand: readonly Card[], card: Card): number {
+  const partner = card.marriagePartner
+  if (!partner || isMeldLead(hand, card, true)) return 0
+  return 1 << cardIndex(partner)
+}
+
+/**
  * Public inference from a legal follow: the mask (bits `cardIndex`) of every
  * card whose presence in the hand would have made playing `card` to `trick`
  * (earlier cards, in play order) illegal. Not following reveals a void in
  * the led suit; a void player who does not win with a trump has no trump
  * above the winning one (no trump at all while none is in the trick); a
  * player who follows without beating a led-suit winner has no higher card of
- * that suit. Leading reveals nothing.
+ * that suit. A lead is covered by `excludedByLead`.
  */
 export function excludedByPlay(
   trick: readonly Card[],

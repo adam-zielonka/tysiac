@@ -31,9 +31,30 @@ describe('strategies', () => {
 
   it('translates every text shown to the player', () => {
     for (const strategy of Object.values(strategies)) {
-      for (const text of [strategy.method, strategy.information, strategy.description]) {
+      for (const text of [
+        strategy.method,
+        strategy.information,
+        strategy.summary,
+        strategy.description,
+      ]) {
         expect(strategyTranslations[text], text).toBeTruthy()
       }
+    }
+  })
+
+  it('keeps the tile summaries short, in both languages', () => {
+    for (const strategy of Object.values(strategies)) {
+      expect(strategy.summary.length, strategy.summary).toBeLessThanOrEqual(160)
+      expect(strategyTranslations[strategy.summary].length).toBeLessThanOrEqual(160)
+    }
+    // Ada's summary starts with the warning that she sees every hand.
+    expect(strategies[PlayerType.AZ].summary).toMatch(/^Zna wszystkie ręce/)
+  })
+
+  it('describes the bots without "it" in English', () => {
+    for (const strategy of Object.values(strategies)) {
+      const english = strategyTranslations[strategy.description]
+      expect(english.replace('Leaves it to chance', '')).not.toMatch(/\bits?\b/i)
     }
   })
 
@@ -67,7 +88,25 @@ describe('strategies', () => {
     expect(text(PlayerType.Rollout)).toContain(`${rollout.bidThreshold * 100}%`)
     expect(text(PlayerType.Rollout)).toContain(`${rollout.contractSamples} symulacji`)
     expect(text(PlayerType.Rollout)).toContain(`${rollout.giftSamples} układach`)
-    expect(text(PlayerType.MCTS)).toContain(`${mcts.iterations} iteracji`)
+    expect(text(PlayerType.MCTS)).toContain(`do ${mcts.iterations} iteracji`)
+    expect(strategies[PlayerType.MCTS].summary).toContain(
+      `do ${mcts.iterations} iteracji`,
+    )
+    expect(strategies[PlayerType.Rollout].summary).toContain(
+      `${rollout.samples} losowych układach`,
+    )
+    expect(strategies[PlayerType.Rollout].summary).toContain(
+      `ze ${rollout.auctionSamples} symulacji`,
+    )
+    expect(strategies[PlayerType.Rollout].summary).toContain(
+      `z ${rollout.contractSamples}.`,
+    )
+    expect(text(PlayerType.AZ)).toContain(
+      `(${az.planBudget / 1000} 000 pozycji na każdy wariant oddania kart)`,
+    )
+    expect(strategies[PlayerType.AZ].summary).toContain(
+      `${az.nodeBudget / 1000} 000 pozycji`,
+    )
     expect(text(PlayerType.MCTS)).toContain(`${Math.round(mcts.bidThreshold * 100)}%`)
     expect(text(PlayerType.AZ)).toContain(`${az.nodeBudget / 1000} 000 pozycji`)
   })

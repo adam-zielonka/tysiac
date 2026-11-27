@@ -70,6 +70,7 @@ describe('translations', () => {
       ...Object.values(strategies).flatMap(strategy => [
         strategy.method,
         strategy.information,
+        strategy.summary,
         strategy.description,
       ]),
     ]

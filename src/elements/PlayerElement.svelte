@@ -76,7 +76,9 @@
     flex-basis: var(--card-w);
     width: var(--card-w);
   }
-  .slot:hover,
+  /* Only a playable card rises over its neighbour; a dimmed one would cover
+     the corner and half the clickable strip of the next card. */
+  .slot:has(:global(.playable)):hover,
   .slot:focus-within {
     z-index: 2;
   }
