@@ -106,6 +106,24 @@ describe('bot matches', () => {
     }
   })
 
+  it('plays legal deals late in a match, with locked seats and 1000 in reach', () => {
+    for (const lineup of [
+      [Rollout, MCTS, AZ],
+      [Tactical, Simple, Random],
+    ]) {
+      for (const scores of [
+        [820, 890, 400],
+        [990, 100, 850],
+      ]) {
+        const players = lineup.map((type, seat) => bot(type, seat))
+        for (const player of players) player.matchScores = scores
+        const deal = freshDeal(300 + scores[0], 1)
+        playOut(deal, players)
+        expect(deal.result()).not.toBeNull()
+      }
+    }
+  }, 120_000)
+
   it('repeats a seeded deal exactly', () => {
     for (const lineup of [
       [Rollout, MCTS, AZ],

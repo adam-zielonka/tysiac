@@ -43,9 +43,9 @@ function marriageCards(hand: number): number {
   return mask
 }
 
-/** No unseen card of the same suit is stronger. */
-function isTop(card: number, unseen: number): boolean {
-  return !strongerInSuit(unseen, card)
+/** No card of the same suit in `others` is stronger. */
+function isTop(card: number, others: number): boolean {
+  return !strongerInSuit(others, card)
 }
 
 /** Card of `mask` with the best score; ties go to the weaker card. */
@@ -69,48 +69,50 @@ interface Seat {
   hand: number
   /** Cards that may still be in other hands. */
   unseen: number
+  /** Unseen cards each player may hold (public inference removed). */
+  could: number[]
+  /** Unseen cards an opponent may hold: what a card has to beat. */
+  threat: number
   /** K and Q of held marriages: never wasted. */
   kept: number
   isDeclarer: boolean
 }
 
-/** Could an opponent of `seat` ruff a lead in `suit`? */
+/**
+ * Could an opponent of `seat` ruff a lead in `suit`? A void opponent with a
+ * trump must play it (any trump wins a trick without one).
+ */
 function ruffRisk(t: Seat, suit: number): boolean {
-  const { st, unseen } = t
+  const { st, unseen, could } = t
   const trump = st.trump
-  if (trump < 0 || suit === trump || !(unseen & SUIT_MASK[trump])) return false
+  if (trump < 0 || suit === trump || !(t.threat & SUIT_MASK[trump])) return false
   const opponents = t.isDeclarer
     ? [(st.declarer + 1) % 3, (st.declarer + 2) % 3]
     : [st.declarer]
   for (const opponent of opponents) {
-    const voids = st.voids[opponent]
-    if (voids & (1 << suit) && !(voids & (1 << trump))) return true
+    const cards = could[opponent]
+    if (!(cards & SUIT_MASK[suit]) && cards & SUIT_MASK[trump]) return true
   }
   // With fewer than two cards out, somebody is already out of the suit.
   return bitCount(unseen & SUIT_MASK[suit]) < 2
 }
 
-/** Would `card` win the trick once `opponent` (the last to play) has played? */
+/**
+ * Would `card` win the trick once `opponent` (the last to play) has played?
+ * The opponent must beat it whenever a card it may hold can: with a higher
+ * card of the led suit, or when void with a (higher) trump.
+ */
 function holdsAgainst(t: Seat, card: number, opponent: number): boolean {
-  const { st, unseen } = t
-  const trump = st.trump
-  const led = SUIT_OF[st.trick[0]]
+  const trump = t.st.trump
+  const led = SUIT_OF[t.st.trick[0]]
   const suit = SUIT_OF[card]
-  const voids = st.voids[opponent]
-  const voidInLed = !!(voids & (1 << led)) || !(unseen & SUIT_MASK[led])
-  const mayRuff =
-    trump >= 0 &&
-    trump !== led &&
-    !!(unseen & SUIT_MASK[trump]) &&
-    !(voids & (1 << trump))
+  const cards = t.could[opponent]
+  const voidInLed = !(cards & SUIT_MASK[led])
   if (suit === led) {
-    if (!voidInLed && strongerInSuit(unseen, card)) return false
-    return !(mayRuff && voidInLed)
+    if (strongerInSuit(cards, card)) return false
+    return !(voidInLed && trump >= 0 && trump !== led && cards & SUIT_MASK[trump])
   }
-  if (suit === trump) {
-    if (!strongerInSuit(unseen, card) || voids & (1 << trump)) return true
-    return !voidInLed
-  }
+  if (suit === trump) return !(voidInLed && strongerInSuit(cards, card))
   return false
 }
 
@@ -121,24 +123,25 @@ function cash(t: Seat, sure: number): number {
 
 /** A low lead that gives away little. */
 function lowLead(t: Seat): number {
-  const { st, hand, unseen, kept, isDeclarer } = t
+  const { st, hand, threat, kept, isDeclarer } = t
   const trump = st.trump
   const candidates = hand & ~kept || hand
-  const declarerVoids = st.voids[st.declarer]
+  const declarerCards = t.could[st.declarer]
   return best(candidates, card => {
     const suit = SUIT_OF[card]
     const order = ORDER_OF[card]
     let cost = POINTS_OF[card] * 2
     if (suit === trump) cost += 25
-    if (order === TEN && strongerInSuit(unseen, card)) cost += 10
+    if (order === TEN && strongerInSuit(threat, card)) cost += 10
     if (kept & (1 << card)) cost += 60
     if (
       !isDeclarer &&
       trump >= 0 &&
       suit !== trump &&
-      declarerVoids & (1 << suit) &&
-      !(declarerVoids & (1 << trump))
+      !(declarerCards & SUIT_MASK[suit]) &&
+      declarerCards & SUIT_MASK[trump]
     ) {
+      // The declarer would ruff.
       cost += 15
     }
     if (
@@ -154,23 +157,24 @@ function lowLead(t: Seat): number {
 }
 
 function lead(t: Seat): number {
-  const { st, hand, unseen, kept, isDeclarer } = t
+  const { st, hand, threat, kept, isDeclarer } = t
   const trump = st.trump
   let sure = 0
   for (let bits = hand & ~kept; bits; bits &= bits - 1) {
     const card = lowestBit(bits)
-    if (isTop(card, unseen) && !ruffRisk(t, SUIT_OF[card])) sure |= 1 << card
+    if (isTop(card, threat) && !ruffRisk(t, SUIT_OF[card])) sure |= 1 << card
   }
-  if (st.trickNumber > 0 && kept) {
-    // Without a trump every top card is safe: cash them before declaring.
+  if (kept) {
+    // A marriage counts from any lead, the first one too. Without a trump
+    // every top card keeps the lead: cash them before declaring.
     if (trump < 0 && sure) return cash(t, sure)
     const suit = SUIT_OF[lowestBit(kept)]
     const king = suit * 6 + KING
-    return isTop(king, unseen) ? king : suit * 6 + QUEEN
+    return isTop(king, threat) ? king : suit * 6 + QUEEN
   }
   if (isDeclarer && trump >= 0) {
     const mine = hand & SUIT_MASK[trump]
-    const theirs = unseen & SUIT_MASK[trump]
+    const theirs = threat & SUIT_MASK[trump]
     // Draw trumps while holding the highest one.
     if (mine && theirs && lowestBit(mine) < lowestBit(theirs)) return lowestBit(mine)
   }
@@ -180,10 +184,10 @@ function lead(t: Seat): number {
 
 /** Adds points to a trick the partner already holds. */
 function smear(t: Seat, legal: number): number {
-  const { st, unseen, kept } = t
+  const { st, threat, kept } = t
   const candidates = legal & ~kept || legal
   return best(candidates, card => {
-    const top = isTop(card, unseen)
+    const top = isTop(card, threat)
     let score = POINTS_OF[card]
     if (top) score -= 15
     else if (ORDER_OF[card] === TEN) score += 5
@@ -194,14 +198,14 @@ function smear(t: Seat, legal: number): number {
 
 /** Throws the least useful card into a trick that is lost. */
 function discard(t: Seat, legal: number): number {
-  const { st, hand, unseen, kept } = t
+  const { st, hand, threat, kept } = t
   const trump = st.trump
   const haveTrumps = trump >= 0 && !!(hand & SUIT_MASK[trump])
   return best(legal, card => {
     const suit = SUIT_OF[card]
     let cost = POINTS_OF[card] * 2
     if (kept & (1 << card)) cost += 60
-    if (isTop(card, unseen)) cost += 20
+    if (isTop(card, threat)) cost += 20
     if (suit === trump) cost += 10
     if (haveTrumps && suit !== trump && bitCount(hand & SUIT_MASK[suit]) === 1) cost -= 2
     return -cost
@@ -213,7 +217,7 @@ function discard(t: Seat, legal: number): number {
  * and sure winners stay for later tricks (the trick is already safe).
  */
 function takeWith(t: Seat, beaters: number, keepTops: boolean): number {
-  const { st, unseen, kept } = t
+  const { st, threat, kept } = t
   const led = SUIT_OF[st.trick[0]]
   const sameSuit = beaters & SUIT_MASK[led]
   if (!sameSuit) {
@@ -225,7 +229,7 @@ function takeWith(t: Seat, beaters: number, keepTops: boolean): number {
     let low = 0
     for (let bits = free; bits; bits &= bits - 1) {
       const card = lowestBit(bits)
-      if (!isTop(card, unseen)) low |= 1 << card
+      if (!isTop(card, threat)) low |= 1 << card
     }
     if (low) return best(low, card => POINTS_OF[card])
   }
@@ -292,13 +296,21 @@ export function tacticalCard(st: PlayState): number {
   if (!(legal & (legal - 1))) return lowestBit(legal)
   const seat = st.turn
   const hand = st.hands[seat]
+  const unseen = FULL_MASK & ~hand & ~st.played
+  const could = st.excluded.map(excluded => unseen & ~excluded)
+  const declarer = st.declarer
+  const isDeclarer = seat === declarer
   const t: Seat = {
     st,
     seat,
     hand,
-    unseen: FULL_MASK & ~hand & ~st.played,
+    unseen,
+    could,
+    threat: isDeclarer
+      ? could[(declarer + 1) % 3] | could[(declarer + 2) % 3]
+      : could[declarer],
     kept: marriageCards(hand),
-    isDeclarer: seat === st.declarer,
+    isDeclarer,
   }
   return st.trick.length ? follow(t, legal) : lead(t)
 }
@@ -316,7 +328,7 @@ export function greedyCard(st: PlayState): number {
   const kept = marriageCards(hand)
   const trump = st.trump
   if (!st.trick.length) {
-    if (st.trickNumber > 0 && kept) return SUIT_OF[lowestBit(kept)] * 6 + KING
+    if (kept) return SUIT_OF[lowestBit(kept)] * 6 + KING
     return best(hand & ~kept || hand, card => {
       const strength = (5 - ORDER_OF[card]) * 100
       return strength + (SUIT_OF[card] === trump ? 50 : 0) - SUIT_OF[card]
@@ -436,11 +448,9 @@ function features(hand: number): number[] {
       if (suit !== trumpSuit && !(hand & SUIT_MASK[suit])) voids++
     }
   }
-  const hasAce = aces ? 1 : 0
   return [
     1,
     aces,
-    hasAce,
     tensWithAce,
     bareTens,
     loneKings,
@@ -451,14 +461,16 @@ function features(hand: number): number[] {
     trumpLength,
     trumpTops,
     voids,
-    hasAce * first,
-    hasAce * rest,
   ]
 }
 
+/*
+ * Refitted for the Polish rules (overtaking, a marriage from the first lead):
+ * R² 0.85, RMSE 21 points. The first marriage now counts in full (it can be
+ * declared at once), so the old ace-dependent marriage terms are gone.
+ */
 const WEIGHTS = [
-  -19.33, 20.94, -2.94, 19.83, 5.19, 3.5, 3.03, 4.39, -0.034, 0.102, 4.17, 3.34, 11.96,
-  1.04, 0.48,
+  -30.84, 21.26, 21.08, 6.57, 5.11, 4.56, 5.52, 0.994, 0.629, 5.58, 2.06, 12.34,
 ]
 
 /** Expected points (cards and marriages) of a declarer keeping these eight cards. */

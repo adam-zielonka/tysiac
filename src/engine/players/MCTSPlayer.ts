@@ -11,6 +11,7 @@ import {
   rollout,
   utility,
 } from './montecarlo'
+import { matchDeltas } from './match'
 import { PlayState } from './PlayState'
 
 /** Utilities are divided by this before entering UCT. */
@@ -56,6 +57,7 @@ export class MCTSPlayer extends BotPlayer {
       this.random,
       this.auctionSamples,
       this.bidThreshold,
+      this.matchScores,
       this.deadline(),
     )
   }
@@ -67,6 +69,7 @@ export class MCTSPlayer extends BotPlayer {
       this.random,
       this.giftSamples,
       this.giftCandidates,
+      this.matchScores,
       this.deadline(),
     )
   }
@@ -77,6 +80,7 @@ export class MCTSPlayer extends BotPlayer {
       actions,
       this.random,
       this.contractSamples,
+      this.matchScores,
       this.deadline(),
     )
   }
@@ -101,6 +105,7 @@ export class MCTSPlayer extends BotPlayer {
     const root = new Node(-1)
     const deadline = this.deadline()
     const c = this.exploration
+    const scores = this.matchScores
     for (let i = 0; i < this.iterations && !(i && pastDeadline(deadline)); i++) {
       const st = PlayState.fromDeal(sampleDeal(view, this.random))
       const path: Node[] = [root]
@@ -147,7 +152,7 @@ export class MCTSPlayer extends BotPlayer {
         st.play(chosen)
         path.push(node)
       }
-      const deltas = rollout(st).deltas()
+      const deltas = matchDeltas(rollout(st).deltas(), st.declarer, scores)
       const rewards = [0, 1, 2].map(player => utility(deltas, player) / REWARD_SCALE)
       for (const visited of path) {
         visited.visits++

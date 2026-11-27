@@ -4,7 +4,13 @@ import { strategies, strategyTranslations } from '../../engine/strategies'
 import { MCTSPlayer } from '../../engine/players/MCTSPlayer'
 import { RolloutPlayer } from '../../engine/players/RolloutPlayer'
 import { AZPlayer } from '../../engine/players/AZPlayer'
-import { TACTICAL_MARGIN } from '../../engine/players/TacticalPlayer'
+import {
+  TACTICAL_CONTRACT_MARGIN,
+  TACTICAL_MARGIN,
+} from '../../engine/players/TacticalPlayer'
+import { MATCH_WIN_BONUS, MOOD_POINTS, SAFE_LEAD } from '../../engine/players/match'
+import { MOOD_CHANCE } from '../../engine/players/montecarlo'
+import { LOCK_SCORE } from '../../engine/rules'
 
 describe('strategies', () => {
   it('describes every player type with the PAN personas and colours', () => {
@@ -36,7 +42,26 @@ describe('strategies', () => {
     const mcts = new MCTSPlayer(0)
     const az = new AZPlayer(0)
     const text = (type: PlayerType) => strategies[type].description
-    expect(text(PlayerType.Tactical)).toContain(`${TACTICAL_MARGIN} punktów`)
+    const percent = (chance: number) => `${Math.round(chance * 100)}%`
+    expect(text(PlayerType.Tactical)).toContain(
+      `pomniejszonej o ${TACTICAL_MARGIN} punktów`,
+    )
+    expect(text(PlayerType.Tactical)).toContain(`O ${MOOD_POINTS} punktów śmielej`)
+    expect(text(PlayerType.Tactical)).toContain(`ma już ${LOCK_SCORE} punktów`)
+    expect(text(PlayerType.Tactical)).toContain(`ma ${SAFE_LEAD} punktów przewagi`)
+    expect(text(PlayerType.Tactical)).toContain(
+      `pomniejszonej o ${TACTICAL_CONTRACT_MARGIN} punktów`,
+    )
+    expect(text(PlayerType.Rollout)).toContain(`z ${LOCK_SCORE} punktami`)
+    expect(text(PlayerType.Rollout)).toContain(`warte ${MATCH_WIN_BONUS} punktów więcej`)
+    expect(text(PlayerType.Rollout)).toContain(
+      `przy ${percent(rollout.bidThreshold - MOOD_CHANCE)} albo dopiero przy ${percent(rollout.bidThreshold + MOOD_CHANCE)}`,
+    )
+    expect(text(PlayerType.MCTS)).toContain(
+      `(${percent(mcts.bidThreshold - MOOD_CHANCE)} albo ${percent(mcts.bidThreshold + MOOD_CHANCE)},`,
+    )
+    expect(text(PlayerType.AZ)).toContain(`o ${MOOD_POINTS} punktów śmielej`)
+    expect(text(PlayerType.AZ)).toContain(`(${LOCK_SCORE} punktów`)
     expect(text(PlayerType.Rollout)).toContain(`${rollout.samples} losowych układach`)
     expect(text(PlayerType.Rollout)).toContain(`${rollout.auctionSamples} symulacjach`)
     expect(text(PlayerType.Rollout)).toContain(`${rollout.bidThreshold * 100}%`)

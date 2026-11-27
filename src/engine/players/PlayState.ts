@@ -11,15 +11,18 @@ import {
   beatsIndex,
   cardIndex,
   hasMarriage,
+  inferred,
+  legalMask,
   maskOf,
   suitOfColor,
 } from './bits'
 
 /**
  * The play phase of a deal on card bitmasks: the same rules as `Deal`
- * (follow suit, forced trump, marriages from the second trick, trump
- * changes), but cheap to copy, so searches can play thousands of deals.
- * Hidden hands of a view are simply empty masks.
+ * (follow suit and overtake, a winning trump when void, marriages in any
+ * trick, trump changes) and the same public inference, but cheap to copy,
+ * so searches can play thousands of deals. Hidden hands of a view are simply
+ * empty masks.
  */
 export class PlayState {
   constructor(
@@ -37,6 +40,8 @@ export class PlayState {
     public played = 0,
     /** Suits a player is known to lack, one bit per suit. */
     public voids: number[] = [0, 0, 0],
+    /** Cards a player provably lacks, like `DealState.excluded`. */
+    public excluded: number[] = [0, 0, 0],
   ) {}
 
   /** Play phase of a full deal or a view (hidden hands become empty). */
@@ -60,6 +65,7 @@ export class PlayState {
           0,
         ),
       ),
+      s.excluded.slice(),
     )
   }
 
@@ -76,6 +82,7 @@ export class PlayState {
       this.meldPoints.slice(),
       this.played,
       this.voids.slice(),
+      this.excluded.slice(),
     )
   }
 
@@ -91,17 +98,25 @@ export class PlayState {
     return this.cardPoints[player] + this.meldPoints[player]
   }
 
-  /** Legal cards of the player on turn as a mask. */
+  /** Card index currently winning the trick (the trick must not be empty). */
+  winning(): number {
+    const trick = this.trick
+    let best = trick[0]
+    for (let i = 1; i < trick.length; i++) {
+      if (beatsIndex(trick[i], best, this.trump)) best = trick[i]
+    }
+    return best
+  }
+
+  /**
+   * Legal cards of the player on turn as a mask: the led suit, and a card of
+   * it that beats the trick when there is one; when void, a trump that wins
+   * the trick if held; otherwise anything.
+   */
   legal(): number {
     const hand = this.hands[this.turn]
     if (!this.trick.length) return hand
-    const follow = hand & SUIT_MASK[SUIT_OF[this.trick[0]]]
-    if (follow) return follow
-    if (this.trump >= 0) {
-      const trumps = hand & SUIT_MASK[this.trump]
-      if (trumps) return trumps
-    }
-    return hand
+    return legalMask(hand, SUIT_OF[this.trick[0]], this.winning(), this.trump)
   }
 
   /** Would leading `card` now declare a marriage? */
@@ -109,7 +124,6 @@ export class PlayState {
     const order = ORDER_OF[card]
     return (
       !this.trick.length &&
-      this.trickNumber > 0 &&
       (order === KING || order === QUEEN) &&
       hasMarriage(this.hands[this.turn], SUIT_OF[card])
     )
@@ -127,10 +141,13 @@ export class PlayState {
       }
     } else {
       const led = SUIT_OF[this.trick[0]]
+      const winning = this.winning()
+      this.excluded[player] |= inferred(card, led, winning, this.trump)
       if (suit !== led) {
         this.voids[player] |= 1 << led
-        if (this.trump >= 0 && this.trump !== led && suit !== this.trump) {
-          this.voids[player] |= 1 << this.trump
+        const trump = this.trump
+        if (trump >= 0 && trump !== led && suit !== trump && SUIT_OF[winning] !== trump) {
+          this.voids[player] |= 1 << trump
         }
       }
     }

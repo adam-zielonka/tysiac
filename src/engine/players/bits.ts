@@ -1,4 +1,4 @@
-import { ALL_CARDS, COLORS, type Card, type Color } from '../Card'
+import { ALL_CARDS, COLORS, cardIndex, type Card, type Color } from '../Card'
 import { MARRIAGE_POINTS } from '../rules'
 
 /*
@@ -28,8 +28,6 @@ export const MARRIAGE_MASK: readonly number[] = [0, 1, 2, 3].map(
   suit => (1 << (suit * 6 + KING)) | (1 << (suit * 6 + QUEEN)),
 )
 
-const INDEX = new Map<Card, number>(ALL_CARDS.map((card, i) => [card, i]))
-
 /** Points of every 6-bit suit pattern, used to add up a mask quickly. */
 const SUIT_POINTS: number[] = Array.from({ length: 64 }, (_, bits) => {
   let sum = 0
@@ -37,9 +35,7 @@ const SUIT_POINTS: number[] = Array.from({ length: 64 }, (_, bits) => {
   return sum
 })
 
-export function cardIndex(card: Card): number {
-  return INDEX.get(card)!
-}
+export { cardIndex }
 
 export function cardAt(index: number): Card {
   return ALL_CARDS[index]
@@ -55,7 +51,7 @@ export function colorOfSuit(suit: number): Color {
 
 export function maskOf(cards: readonly Card[]): number {
   let mask = 0
-  for (const card of cards) mask |= 1 << INDEX.get(card)!
+  for (const card of cards) mask |= 1 << cardIndex(card)
   return mask
 }
 
@@ -129,4 +125,56 @@ export function beatsIndex(a: number, b: number, trump: number): boolean {
 /** Cards of `mask` stronger than `card` in the same suit. */
 export function strongerInSuit(mask: number, card: number): number {
   return mask & SUIT_MASK[SUIT_OF[card]] & ((1 << card) - 1)
+}
+
+/**
+ * Legal cards of `hand` in a trick led in `led` and won so far by `winning`
+ * (Polish overtaking rule, see `rules.legalPlays`).
+ */
+export function legalMask(
+  hand: number,
+  led: number,
+  winning: number,
+  trump: number,
+): number {
+  const follow = hand & SUIT_MASK[led]
+  if (follow) {
+    // A trumped trick cannot be beaten with the led suit.
+    const higher =
+      SUIT_OF[winning] === led ? follow & strongerInSuit(FULL_MASK, winning) : 0
+    return higher || follow
+  }
+  if (trump >= 0) {
+    const trumps =
+      hand &
+      (SUIT_OF[winning] === trump ? strongerInSuit(FULL_MASK, winning) : SUIT_MASK[trump])
+    if (trumps) return trumps
+  }
+  return hand
+}
+
+/**
+ * Cards a player provably lacks after playing `card` to a trick led in `led`
+ * and won so far by `winning`, exactly like `Deal`: the led suit when not
+ * following, then the trumps that would have won when not trumping, or the
+ * led-suit cards above the winner when following without beating it.
+ */
+export function inferred(
+  card: number,
+  led: number,
+  winning: number,
+  trump: number,
+): number {
+  const suit = SUIT_OF[card]
+  if (suit !== led) {
+    let mask = SUIT_MASK[led]
+    if (trump >= 0 && trump !== led && suit !== trump) {
+      mask |=
+        SUIT_OF[winning] === trump ? strongerInSuit(FULL_MASK, winning) : SUIT_MASK[trump]
+    }
+    return mask
+  }
+  return SUIT_OF[winning] === led && card > winning
+    ? strongerInSuit(FULL_MASK, winning)
+    : 0
 }
