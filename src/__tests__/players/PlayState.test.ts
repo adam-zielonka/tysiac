@@ -51,9 +51,12 @@ describe('card masks', () => {
 })
 
 describe('PlayState', () => {
-  it('follows Deal exactly for random, tactical and greedy play', () => {
+  it('follows Deal exactly: legal cards, marriages, inference and scores', () => {
     const random = seededRandom(1)
-    for (let game = 0; game < 300; game++) {
+    let excludedSeen = 0
+    let partialSeen = 0
+    let firstTrickMelds = 0
+    for (let game = 0; game < 600; game++) {
       const deal = Deal.deal(game % 3, Deck.shuffle(Deck.generate(), random))
       while (deal.phase !== 'play') deal.apply(pick(random, deal.legalActions()))
       const st = PlayState.fromDeal(deal)
@@ -69,12 +72,75 @@ describe('PlayState', () => {
               : greedyCard(st)
         expect(st.legal() & (1 << card)).not.toBe(0)
         expect(st.isMeld(card)).toBe(deal.isMeld(cardAt(card)))
+        if (st.isMeld(card) && st.trickNumber === 0) firstTrickMelds++
         deal.apply({ type: 'play', card: cardAt(card) })
         st.play(card)
         expect(st).toEqual(PlayState.fromDeal(deal))
+        // A view carries the same public inference.
+        expect(PlayState.fromDeal(deal.viewFor(deal.turn)).excluded).toEqual(st.excluded)
       }
       expect(st.deltas()).toEqual(deal.result()!.deltas)
+      for (const mask of st.excluded) {
+        if (mask) excludedSeen++
+        for (let suit = 0; suit < 4; suit++) {
+          const bits = (mask >>> (suit * 6)) & 63
+          if (bits && bits !== 63) partialSeen++
+        }
+      }
     }
+    // The series covers voids, partial exclusions and first-trick marriages.
+    expect(excludedSeen).toBeGreaterThan(1000)
+    expect(partialSeen).toBeGreaterThan(400)
+    expect(firstTrickMelds).toBeGreaterThan(80)
+  }, 60_000)
+
+  it('makes a follower beat the trick and a void player trump over', () => {
+    // ♠ led by seat 0 with the jack; seat 1 holds the ace and the nine.
+    const st = new PlayState(
+      [maskOf(cards('J♠ A♦')), maskOf(cards('A♠ 9♠ K♣')), maskOf(cards('Q♥ 9♥ 10♣'))],
+      0,
+      100,
+      0,
+      suitOf('♥'),
+    )
+    st.play(cardIndex(cards('J♠')[0]))
+    expect(cardsIn(st.legal())).toEqual(cards('A♠'))
+    st.play(cardIndex(cards('A♠')[0]))
+    // Seat 2 has no spade: it must trump, and either heart beats the ace.
+    expect(cardsIn(st.legal())).toEqual(cards('Q♥ 9♥'))
+    st.play(cardIndex(cards('9♥')[0]))
+    expect(st.leader).toBe(2)
+    expect(st.excluded[2] & maskOf(cards('9♠ K♠ A♠'))).toBe(maskOf(cards('9♠ K♠ A♠')))
+
+    // Trick trumped already: a void player must trump over, or plays anything.
+    const next = new PlayState(
+      [maskOf(cards('A♣ 9♦')), maskOf(cards('K♥ J♦')), maskOf(cards('Q♣ J♥'))],
+      2,
+      100,
+      2,
+      suitOf('♥'),
+    )
+    next.play(cardIndex(cards('Q♣')[0]))
+    // Seat 0 must beat the queen with the ace.
+    expect(cardsIn(next.legal())).toEqual(cards('A♣'))
+    next.hands[0] = maskOf(cards('9♦ 10♦'))
+    next.play(cardIndex(cards('9♦')[0]))
+    // Seat 0 did not trump: it holds no heart at all.
+    expect(next.voids[0]).toBe((1 << suitOf('♣')) | (1 << suitOf('♥')))
+    expect(cardsIn(next.legal())).toEqual(cards('K♥'))
+  })
+
+  it('declares a marriage on the very first lead', () => {
+    const st = new PlayState(
+      [maskOf(cards('K♥ Q♥ 9♠')), maskOf(cards('A♥ 9♦ J♠')), maskOf(cards('9♥ 10♠ J♦'))],
+      0,
+      100,
+      0,
+    )
+    expect(st.isMeld(cardIndex(cards('Q♥')[0]))).toBe(true)
+    st.play(cardIndex(cards('Q♥')[0]))
+    expect(st.trump).toBe(suitOf('♥'))
+    expect(st.meldPoints[0]).toBe(100)
   })
 
   it('reads a view with the hidden hands empty', () => {
@@ -87,3 +153,8 @@ describe('PlayState', () => {
     expect(st.leader).toBe(deal.declarer)
   })
 })
+
+/** Suit index of a colour symbol. */
+function suitOf(symbol: string): number {
+  return ['♥', '♦', '♣', '♠'].indexOf(symbol)
+}

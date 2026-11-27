@@ -5,6 +5,7 @@ import { AlphaBeta, type SearchOptions } from './alphabeta'
 import { cardAt, maskOf } from './bits'
 import { BotPlayer } from './BotPlayer'
 import { bidUpTo, contractUpTo, giftOrder, playAction } from './heuristics'
+import { MOOD_POINTS, moodOf, onlyDefeatCounts, safeContractLimit } from './match'
 import { PlayState } from './PlayState'
 
 interface Plan {
@@ -43,8 +44,9 @@ export class AZPlayer extends BotPlayer {
   }
 
   protected bid(deal: Deal, actions: Action[]): Action {
+    const mood = moodOf(deal, this.matchScores)
     const plan = this.plan(deal, deal.turn)
-    return bidUpTo(deal, actions, plan.value)
+    return bidUpTo(deal, actions, plan.value + mood * MOOD_POINTS)
   }
 
   protected give(deal: Deal, actions: Action[]): Action {
@@ -58,7 +60,8 @@ export class AZPlayer extends BotPlayer {
 
   protected declare(deal: Deal, actions: Action[]): Action {
     const value = this.search(PlayState.fromDeal(deal), this.nodeBudget, false).value
-    return contractUpTo(actions, Math.floor(value / BID_STEP) * BID_STEP)
+    const limit = Math.floor(value / BID_STEP) * BID_STEP
+    return contractUpTo(actions, safeContractLimit(this.matchScores, deal.turn, limit))
   }
 
   protected play(deal: Deal, actions: Action[]): Action {
@@ -67,13 +70,23 @@ export class AZPlayer extends BotPlayer {
   }
 
   private search(st: PlayState, nodeBudget: number, forContract: boolean) {
+    // Her own points do not count at 800+ or when the declarer would win the
+    // match by making the contract: then she only defends.
+    const selfWeight = onlyDefeatCounts(
+      this.matchScores,
+      this.id,
+      st.declarer,
+      st.contract,
+    )
+      ? 0
+      : this.selfWeight
     const options: SearchOptions = {
       nodeBudget,
       contractBonus: forContract ? this.contractBonus : 0,
       defenderMeldWeight: forContract ? this.defenderMeldWeight : 0,
       deadline: this.deadline,
       self: forContract ? this.id : -1,
-      selfWeight: this.selfWeight,
+      selfWeight,
     }
     return new AlphaBeta(st, options).run()
   }

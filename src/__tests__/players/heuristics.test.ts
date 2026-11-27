@@ -83,6 +83,32 @@ describe('tactical card play', () => {
     expect(cardAt(card).id).toBe('9♥')
   })
 
+  it('declares a marriage on the first lead without a sure winner', () => {
+    const deal = toPlay(
+      dealOf(
+        ['A♥ 10♥ A♦ 10♦ A♣ 10♣ K♠', 'K♥ Q♥ J♥ 9♦ J♣ 9♣ Q♠', 'A♠ 10♠ K♦ Q♦ K♣ Q♣ 9♥'],
+        '9♠ J♠ J♦',
+      ),
+      ['9♠', 'J♠'],
+    )
+    expect(deal.trickNumber).toBe(0)
+    const lead = decide(deal, bot(PlayerType.Tactical, 1))
+    expect(lead.type === 'play' && deal.isMeld(lead.card)).toBe(true)
+    // The ace and ten of hearts are out: the queen is risked, not the king.
+    expect(playedCard(lead)).toBe('Q♥')
+  })
+
+  it('cashes a ten once the overtaking rule shows the declarer lacks the ace', () => {
+    const hands = [cards('9♠ Q♣ 9♦'), cards('10♠ 9♣ J♣'), cards('A♠ K♠ J♦')].map(maskOf)
+    const played = 0xffffff & ~(hands[0] | hands[1] | hands[2])
+    const st = new PlayState(hands, 0, 100, 1, -1, 5, [], [0, 0, 0], [0, 0, 0], played)
+    // Unknown holders: the ten is not safe against the ace and the king.
+    expect(cardAt(tacticalCard(st)).id).not.toBe('10♠')
+    // The declarer once followed spades below a queen: no ace, ten or king.
+    st.excluded[0] = maskOf(cards('A♠ 10♠ K♠'))
+    expect(cardAt(tacticalCard(st)).id).toBe('10♠')
+  })
+
   it('never reads other hands: a view gives the same card as the full deal', () => {
     const deal = play(defenceDeal(), '9♠ A♠ K♠ A♥')
     expect(tacticalCard(PlayState.fromDeal(deal.viewFor(0)))).toBe(
@@ -92,17 +118,24 @@ describe('tactical card play', () => {
 })
 
 describe('greedy card play', () => {
-  it('declares a marriage with the king when leading', () => {
-    const deal = play(marriageDeal(false), 'A♠ Q♠ K♠')
-    const card = greedyCard(PlayState.fromDeal(deal))
-    expect(cardAt(card).id).toBe('K♥')
+  it('declares a marriage with the king when leading, the first lead too', () => {
+    const deal = marriageDeal(false)
+    expect(cardAt(greedyCard(PlayState.fromDeal(deal))).id).toBe('K♥')
+    play(deal, 'A♠ Q♠ K♠')
+    expect(cardAt(greedyCard(PlayState.fromDeal(deal))).id).toBe('K♥')
   })
 
   it('leads the strongest card otherwise and wins with the cheapest card', () => {
-    const deal = marriageDeal(false)
+    const deal = toPlay(
+      dealOf(
+        ['A♥ 10♥ A♦ 10♦ A♣ 10♣ K♠', 'A♠ J♦ K♥ 9♥ 9♣ 9♦ J♣', '10♠ Q♠ K♦ Q♦ K♣ Q♣ J♥'],
+        '9♠ Q♥ J♠',
+      ),
+      ['9♠', 'Q♥'],
+    )
     expect(cardAt(greedyCard(PlayState.fromDeal(deal))).id).toBe('A♠')
     play(deal, 'J♦')
-    // Seat 2 holds K♦ and Q♦: the queen is enough.
+    // Seat 2 holds K♦ and Q♦ and must beat the jack: the queen is enough.
     expect(cardAt(greedyCard(PlayState.fromDeal(deal))).id).toBe('Q♦')
   })
 })

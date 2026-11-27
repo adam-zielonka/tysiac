@@ -38,6 +38,7 @@ export class RolloutPlayer extends BotPlayer {
       this.random,
       this.auctionSamples,
       this.bidThreshold,
+      this.matchScores,
       this.deadline(),
     )
   }
@@ -49,6 +50,7 @@ export class RolloutPlayer extends BotPlayer {
       this.random,
       this.giftSamples,
       this.giftCandidates,
+      this.matchScores,
       this.deadline(),
     )
   }
@@ -59,11 +61,19 @@ export class RolloutPlayer extends BotPlayer {
       actions,
       this.random,
       this.contractSamples,
+      this.matchScores,
       this.deadline(),
     )
   }
 
   protected play(deal: Deal, actions: Action[]): Action {
-    return flatMonteCarloPlay(deal, actions, this.random, this.samples, this.deadline())
+    return flatMonteCarloPlay(
+      deal,
+      actions,
+      this.random,
+      this.samples,
+      this.matchScores,
+      this.deadline(),
+    )
   }
 }

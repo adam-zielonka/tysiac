@@ -11,6 +11,7 @@ import {
   beatsIndex,
   bitCount,
   hasMarriage,
+  legalMask,
   lowestBit,
   pointsOfMask,
 } from './bits'
@@ -202,16 +203,21 @@ export class AlphaBeta {
     return (this.leader + this.trickLength) % 3
   }
 
+  /** Cards of the trick in progress; the winner so far. */
+  private winning(): number {
+    const base = this.trickNumber * 3
+    let best = this.cards[base]
+    if (this.trickLength > 1 && beatsIndex(this.cards[base + 1], best, this.trump)) {
+      best = this.cards[base + 1]
+    }
+    return best
+  }
+
   private legal(player: number): number {
     const hand = this.hands[player]
     if (!this.trickLength) return hand
-    const follow = hand & SUIT_MASK[SUIT_OF[this.cards[this.trickNumber * 3]]]
-    if (follow) return follow
-    if (this.trump >= 0) {
-      const trumps = hand & SUIT_MASK[this.trump]
-      if (trumps) return trumps
-    }
-    return hand
+    const led = SUIT_OF[this.cards[this.trickNumber * 3]]
+    return legalMask(hand, led, this.winning(), this.trump)
   }
 
   /** Plays `card`, searches the position and takes the card back. */
@@ -225,7 +231,7 @@ export class AlphaBeta {
     const selfPoints = this.selfPoints
     const trickLength = this.trickLength
     const base = this.trickNumber * 3
-    if (!trickLength && this.trickNumber > 0) {
+    if (!trickLength) {
       const order = ORDER_OF[card]
       const suit = SUIT_OF[card]
       if ((order === KING || order === QUEEN) && hasMarriage(hand, suit)) {
@@ -382,6 +388,8 @@ export class AlphaBeta {
    * least-squares fit to 1500 exactly solved positions (2 to 5 tricks played):
    * remaining points, the declarer's and defenders' unbeatable top cards,
    * trump lengths, a marriage the declarer can declare at once, who leads.
+   * Re-checked under the Polish rules (overtaking, first-trick marriages):
+   * RMSE 14.5 points on 1500 new positions, and a refit gains nothing.
    * The contract bonus enters as a smooth chance around the contract.
    */
   private evaluate(): number {
@@ -485,7 +493,6 @@ export class AlphaBeta {
         const suit = SUIT_OF[card]
         const top = !(others & SUIT_MASK[suit] & ((1 << card) - 1))
         if (
-          this.trickNumber > 0 &&
           (order === KING || order === QUEEN) &&
           hasMarriage(this.hands[player], suit)
         ) {
