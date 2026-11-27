@@ -10,6 +10,7 @@
   import SeatBadge from './SeatBadge.svelte'
   import CenterElement from './CenterElement.svelte'
   import ActionBar from './ActionBar.svelte'
+  import LockIcon from './LockIcon.svelte'
   import {
     joinNames,
     meldValue,
@@ -52,6 +53,12 @@
       ? deal.s.musikCards
       : []
   $: lastTrick = $game.showLastTrick ? deal?.s.lastTrick : null
+  $: dealOver = $game.status === 'dealEnd' || $game.status === 'gameOver'
+  /** After the last trick the final cards stay on the table before the summary. */
+  $: finalTrick = dealOver && !!lastTrick
+  $: lockedNames = $game.lockedSeats
+    .map((locked, seat) => (locked ? nameOf(seat) : ''))
+    .filter(Boolean)
 
   // Every value the texts read is passed in, so Svelte reruns them on each change.
   $: status = statusText(
@@ -63,11 +70,21 @@
     lastTrick,
     giftTarget,
     watching,
+    dealOver,
   )
-  $: hint = hintText($game, $tr, deal, phase, humanTurn)
+  $: hint = hintText($game, $tr, deal, phase, humanTurn, finalTrick)
 
   function statusText(..._deps: unknown[]): string {
     if (isSetup || !deal) return $tr('Wybierz graczy i rozdaj karty.')
+    if (dealOver && lastTrick) {
+      const points = cardPoints(lastTrick.plays.map(play => play.card))
+      return lastTrick.winner === 0 && !watching
+        ? $tr('Bierzesz ostatnią lewę · +{points}', { points })
+        : $tr('{name} bierze ostatnią lewę · +{points}', {
+            name: nameOf(lastTrick.winner),
+            points,
+          })
+    }
     if ($game.status === 'gameOver') {
       const winners = $game.winners
       if (winners.length === 1 && winners[0] === 0 && !watching)
@@ -126,6 +143,7 @@
 
   function hintText(..._deps: unknown[]): string {
     if (isSetup || !deal) return $tr('Kliknij fotel, aby zmienić gracza.')
+    if (finalTrick) return $tr('Za chwilę wynik rozdania…')
     if ($game.status === 'gameOver')
       return $tr('Kliknij „Nowa partia”, aby zagrać ponownie.')
     if ($game.status === 'dealEnd')
@@ -161,13 +179,15 @@
 
   $: phaseLabel = isSetup
     ? ''
-    : $game.status !== 'playing'
-      ? $tr('Wynik')
-      : phase === 'bidding'
-        ? $tr('Licytacja')
-        : phase === 'play'
-          ? $tr('Lewa {number}/8', { number: Math.min(deal!.trickNumber + 1, 8) })
-          : $tr('Musik')
+    : finalTrick
+      ? $tr('Lewa {number}/8', { number: 8 })
+      : $game.status !== 'playing'
+        ? $tr('Wynik')
+        : phase === 'bidding'
+          ? $tr('Licytacja')
+          : phase === 'play'
+            ? $tr('Lewa {number}/8', { number: Math.min(deal!.trickNumber + 1, 8) })
+            : $tr('Musik')
 
   function canClick(card: Card): boolean {
     if (!humanTurn || !deal) return false
@@ -237,10 +257,7 @@
     </div>
     <div class="target">{$tr('GRA DO {target}', { target: $game.target })}</div>
   </div>
-  <div
-    class="felt"
-    class:finished={$game.status === 'dealEnd' || $game.status === 'gameOver'}
-  >
+  <div class="felt" class:finished={dealOver && !finalTrick}>
     <div class="table-outline"></div>
     <div class="felt-mark" aria-hidden="true">
       1000<small>{$tr('TYSIĄC · GRA KARCIANA')}</small>
@@ -272,6 +289,15 @@
           <span class="info-chip"
             >{$tr('Otwiera: {name} · 100', { name: nameOf(deal.opener) })}</span
           >
+          {#if lockedNames.length}
+            <span class="info-chip lock-chip"
+              ><LockIcon />
+              {$tr('{names} · {score}+: punkty tylko jako grający', {
+                names: joinNames(lockedNames, $tr),
+                score: $game.lockScore,
+              })}</span
+            >
+          {/if}
         {:else}
           <span class="info-chip trump" class:no-trump={deal.trump === null}
             >{deal.trump === null
@@ -494,6 +520,12 @@
     border-color: #f1dc8e66;
     color: #f6e7ad;
     font-weight: 650;
+  }
+  .lock-chip {
+    border-color: #f1dc8e55;
+    color: #f6e7ad;
+    white-space: normal;
+    text-align: center;
   }
   .trump.no-trump {
     border-color: #a8c8a733;

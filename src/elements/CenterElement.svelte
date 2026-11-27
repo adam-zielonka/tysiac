@@ -13,6 +13,7 @@
   $: deal = $game.deal
   $: status = $game.status
   $: phase = deal?.phase
+  $: finished = status === 'dealEnd' || status === 'gameOver'
   $: nameOf = (seat: number) => $tr(strategies[$game.playersSelect[seat]].name)
   $: lastTrick = $game.showLastTrick ? deal?.s.lastTrick : null
   $: plays = lastTrick ? lastTrick.plays : (deal?.trick ?? [])
@@ -51,7 +52,7 @@
 
 {#if status === 'setup' || !deal}
   <p class="setup-prompt">{$tr('Kliknij miejsce przy stole, aby wybrać gracza.')}</p>
-{:else if status === 'dealEnd' || status === 'gameOver'}
+{:else if finished && !lastTrick}
   <DealSummary />
 {:else if phase === 'bidding'}
   <div class="musik" role="img" aria-label={$tr('Musik: 3 zakryte karty')}>
@@ -81,7 +82,7 @@
     <span class="caption-label">{$tr('Musik')}</span>
     <span>{musikCaption}</span>
   </div>
-{:else if phase === 'play'}
+{:else if phase === 'play' || phase === 'finished'}
   <div
     class="trick"
     role="group"
@@ -105,7 +106,16 @@
     {/if}
   </div>
   <div class="center-caption trick-caption">
-    {#if lastTrick}
+    {#if lastTrick && finished}
+      <strong
+        >{winner === 0 && $game.playersSelect[0] === PlayerType.Human
+          ? $tr('Bierzesz ostatnią lewę · +{points}', { points: trickPoints })
+          : $tr('{name} bierze ostatnią lewę · +{points}', {
+              name: nameOf(winner),
+              points: trickPoints,
+            })}</strong
+      >
+    {:else if lastTrick}
       <strong
         >{winner === 0 && $game.playersSelect[0] === PlayerType.Human
           ? $tr('Bierzesz lewę · +{points}', { points: trickPoints })

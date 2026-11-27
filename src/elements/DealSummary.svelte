@@ -3,11 +3,18 @@
   import { store } from '../engine/Store'
   import { strategies } from '../engine/strategies'
   import { PlayerType } from '../engine/PlayerType'
-  import { formatNumber, joinNames, signed } from './ui'
+  import LockIcon from './LockIcon.svelte'
+  import { formatNumber, joinNames, matchEnd, signed } from './ui'
 
   const { game } = store
 
   $: result = $game.deal?.result() ?? null
+  /** The written record: deltas after the 800 lock. */
+  $: record = $game.records.find(entry => entry.number === $game.dealNumber)
+  $: deltas = record?.deltas ?? result?.deltas ?? [0, 0, 0]
+  $: locked = record?.locked ?? [false, false, false]
+  $: anyLocked = locked.some(Boolean)
+  $: lockLabel = $tx('{score}+: punkty tylko jako grający', { score: $game.lockScore })
   $: gameOver = $game.status === 'gameOver'
   $: nameOf = (seat: number) => $tx(strategies[$game.playersSelect[seat]].name)
   $: humanWins =
@@ -19,6 +26,19 @@
     : $game.winners.length > 1
       ? $tx('Remis: {names}', { names: joinNames($game.winners.map(nameOf), $tx) })
       : $tx('Partię wygrywa {name}', { name: nameOf($game.winners[0] ?? 0) })
+  $: ending = gameOver && record ? matchEnd(record, $game.winners, $game.target) : null
+  $: endingText = !ending
+    ? ''
+    : ending.kind === 'highest'
+      ? $tx('Rozgrywający nie osiągnął {target}, więc wygrywa najwyższy wynik.', {
+          target: $game.target,
+        })
+      : ending.rivals.length
+        ? $tx(
+            'Rozgrywający, który osiąga {target}, wygrywa — nawet gdy obrońca ma tyle samo lub więcej ({names}).',
+            { target: $game.target, names: joinNames(ending.rivals.map(nameOf), $tx) },
+          )
+        : $tx('Rozgrywający osiąga {target} i wygrywa partię.', { target: $game.target })
 </script>
 
 {#if result}
@@ -71,11 +91,19 @@
             >
             <td>{result.cardPoints[seat]}</td>
             <td>{result.meldPoints[seat] || '–'}</td>
-            <td
-              class="delta"
-              class:negative={result.deltas[seat] < 0}
-              class:positive={result.deltas[seat] > 0}>{signed(result.deltas[seat])}</td
-            >
+            {#if locked[seat]}
+              <td class="delta locked" title={lockLabel}
+                ><span aria-hidden="true">0 · <LockIcon />{$game.lockScore}+</span><span
+                  class="visually-hidden">0, {lockLabel}</span
+                ></td
+              >
+            {:else}
+              <td
+                class="delta"
+                class:negative={deltas[seat] < 0}
+                class:positive={deltas[seat] > 0}>{signed(deltas[seat])}</td
+              >
+            {/if}
             <td class="total" class:winner={gameOver && $game.winners.includes(seat)}
               >{formatNumber($game.scores[seat])}</td
             >
@@ -83,8 +111,17 @@
         {/each}
       </tbody>
     </table>
+    {#if anyLocked}
+      <p class="lock-note">
+        <LockIcon />
+        {$tx('{score}+: obrońca z co najmniej {score} pkt nie zapisuje punktów.', {
+          score: $game.lockScore,
+        })}
+      </p>
+    {/if}
     {#if gameOver}
       <p class="winner-text">{winnerText}</p>
+      {#if endingText}<p class="ending-text">{endingText}</p>{/if}
       <button type="button" class="button primary" on:click={() => game.prepare()}
         >{$tx('Nowa partia')}</button
       >
@@ -184,9 +221,26 @@
   .negative {
     color: #f0b0b8;
   }
+  .delta.locked {
+    color: #f1dc8e;
+  }
+  .delta.locked :global(.lock-icon) {
+    margin-right: 2px;
+  }
   .total {
     color: #f0f3e6;
     font-weight: 700;
+  }
+  .lock-note,
+  .ending-text {
+    margin: -2px 0 0;
+    color: #c8d6c2;
+    font-size: 12px;
+    line-height: 17px;
+    text-align: center;
+  }
+  .lock-note :global(.lock-icon) {
+    color: #f1dc8e;
   }
   .total.winner {
     color: #f1dc8e;

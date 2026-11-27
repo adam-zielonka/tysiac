@@ -1,7 +1,7 @@
 import { Card, type Color } from '../engine/Card'
 import type { Bid, Deal } from '../engine/Deal'
-import type { HistoryEntry } from '../engine/Game'
-import { MARRIAGE_POINTS } from '../engine/rules'
+import type { DealRecord, HistoryEntry } from '../engine/Game'
+import { MARRIAGE_POINTS, beats, legalPlays, trickWinnerIndex } from '../engine/rules'
 
 export type Translate = (
   source: string,
@@ -114,17 +114,130 @@ export function activityText(
   }
 }
 
-/** What the player to move must do with the current trick. */
+/**
+ * What the Polish overtaking rule asks of the player to move:
+ * - `lead`: an empty trick, any card;
+ * - `overtake`: follow suit and beat `beat` (the card winning so far);
+ * - `follow`: follow suit with any card, because the trick is already
+ *   trumped or nothing in the suit beats `beat`;
+ * - `trump`: void in the led suit, win with a trump (higher than `beat`
+ *   when the trick is already trumped);
+ * - `any`: void and unable to win with a trump; under-trumping is never forced.
+ */
+export type PlayRule =
+  | { kind: 'lead' }
+  | { kind: 'overtake'; suit: Color; beat: Card }
+  | { kind: 'follow'; suit: Color; beat: Card; reason: 'trumped' | 'lower' }
+  | { kind: 'trump'; suit: Color; trump: Color; beat: Card | null }
+  | {
+      kind: 'any'
+      suit: Color
+      beat: Card
+      reason: 'noTrump' | 'noTrumpCards' | 'lowTrumps'
+    }
+
+/** Classifies the legal plays (`legalPlays`) of `hand` for the current trick. */
+export function playRule(
+  hand: readonly Card[],
+  trick: readonly Card[],
+  trump: Color | null,
+): PlayRule {
+  if (!trick.length) return { kind: 'lead' }
+  const suit = trick[0].color
+  const beat = trick[trickWinnerIndex(trick, trump)]
+  const playable = legalPlays(hand, trick, trump)
+  const wins = playable.some(card => beats(card, beat, trump))
+  if (hand.some(card => card.color === suit)) {
+    if (wins) return { kind: 'overtake', suit, beat }
+    const trumped = trump !== null && beat.color === trump && suit !== trump
+    return { kind: 'follow', suit, beat, reason: trumped ? 'trumped' : 'lower' }
+  }
+  if (trump !== null && wins)
+    return { kind: 'trump', suit, trump, beat: beat.color === trump ? beat : null }
+  const reason =
+    trump === null
+      ? 'noTrump'
+      : hand.some(card => card.color === trump)
+        ? 'lowTrumps'
+        : 'noTrumpCards'
+  return { kind: 'any', suit, beat, reason }
+}
+
+/** Hint for the player to move, derived from the engine's legal plays. */
 export function playHint(deal: Deal, t: Translate): string {
-  const lead = deal.trick[0]?.card
-  if (!lead) return t('Wyjdź dowolną kartą')
   const hand = deal.hand(deal.turn)
-  if (hand.some(card => card.color === lead.color))
-    return t('Dołóż do koloru {suit}', { suit: lead.colorText })
-  const trump = deal.trump
-  if (trump !== null && hand.some(card => card.color === trump))
-    return t('Brak koloru — przebij atutem {suit}', { suit: suitText(trump) })
-  return t('Brak koloru i atutu — zagraj dowolną kartę')
+  const rule = playRule(
+    hand,
+    deal.trick.map(play => play.card),
+    deal.trump,
+  )
+  switch (rule.kind) {
+    case 'lead':
+      return hand.some(card => deal.isMeld(card))
+        ? t('Wyjdź dowolną kartą · K lub Q z pary to meldunek')
+        : t('Wyjdź dowolną kartą')
+    case 'overtake':
+      return t('Dołóż do koloru {suit} i przebij {card}', {
+        suit: suitText(rule.suit),
+        card: rule.beat.text,
+      })
+    case 'follow':
+      return rule.reason === 'trumped'
+        ? t('Dołóż do koloru {suit} · lewa jest już przebita atutem', {
+            suit: suitText(rule.suit),
+          })
+        : t('Dołóż do koloru {suit} · nie przebijesz {card}', {
+            suit: suitText(rule.suit),
+            card: rule.beat.text,
+          })
+    case 'trump':
+      return rule.beat
+        ? t('Przebij atutem wyższym niż {card} · nie masz koloru {suit}', {
+            card: rule.beat.text,
+            suit: suitText(rule.suit),
+          })
+        : t('Przebij atutem {trump} · nie masz koloru {suit}', {
+            trump: suitText(rule.trump),
+            suit: suitText(rule.suit),
+          })
+    case 'any':
+      switch (rule.reason) {
+        case 'noTrump':
+          return t('Dowolna karta · nie masz koloru {suit}, a atutu jeszcze nie ma', {
+            suit: suitText(rule.suit),
+          })
+        case 'noTrumpCards':
+          return t('Dowolna karta · nie masz koloru {suit} ani atutu', {
+            suit: suitText(rule.suit),
+          })
+        case 'lowTrumps':
+          return t('Dowolna karta · nie masz atutu wyższego niż {card}', {
+            card: rule.beat.text,
+          })
+      }
+  }
+}
+
+/**
+ * Why the match ended with these winners: the declarer who reaches the
+ * target wins alone (`rivals` had as many points or more), otherwise the
+ * highest total wins.
+ */
+export type MatchEnd = { kind: 'declarer'; rivals: number[] } | { kind: 'highest' }
+
+export function matchEnd(
+  record: DealRecord,
+  winners: readonly number[],
+  target: number,
+): MatchEnd {
+  const { declarer, totals } = record
+  if (winners.length === 1 && winners[0] === declarer && totals[declarer] >= target) {
+    const rivals = [0, 1, 2].filter(
+      seat => seat !== declarer && totals[seat] >= totals[declarer],
+    )
+    return { kind: 'declarer', rivals }
+  }
+  return { kind: 'highest' }
 }
 
 /** Joins names as "A", "A i B", "A, B i C" (translated conjunction). */

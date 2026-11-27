@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { Color, cards } from '../engine/Card'
 import { Deal } from '../engine/Deal'
-import type { HistoryEntry } from '../engine/Game'
+import type { DealRecord, HistoryEntry } from '../engine/Game'
 import {
   activityText,
   bidText,
   formatNumber,
   joinNames,
+  matchEnd,
   meldValue,
   nearestOption,
   playHint,
+  playRule,
   pluralForm,
   seatSide,
   signed,
@@ -121,8 +123,74 @@ describe('activity texts', () => {
   })
 })
 
+describe('play rules', () => {
+  const rule = (hand: string, trick: string, trump: Color | null = null) =>
+    playRule(cards(hand), cards(trick), trump)
+  const card = (id: string) => cards(id)[0]
+
+  it('lets the leader play anything', () => {
+    expect(rule('A♥ 9♠', '')).toEqual({ kind: 'lead' })
+  })
+
+  it('forces beating the winning card of the led suit', () => {
+    expect(rule('A♣ K♣ 9♥', '10♣')).toEqual({
+      kind: 'overtake',
+      suit: Color.Trefl,
+      beat: card('10♣'),
+    })
+    // The second card already beats the lead: beat the king, not the jack.
+    expect(rule('A♣ Q♣', 'J♣ K♣')).toMatchObject({ kind: 'overtake', beat: card('K♣') })
+  })
+
+  it('only asks to follow when the suit cannot win', () => {
+    expect(rule('Q♣ 9♣ A♥', 'K♣')).toEqual({
+      kind: 'follow',
+      suit: Color.Trefl,
+      beat: card('K♣'),
+      reason: 'lower',
+    })
+    // A trumped trick cannot be won with the led suit: any card of it.
+    expect(rule('A♣ 9♣', 'K♣ 9♥', Color.Kier)).toEqual({
+      kind: 'follow',
+      suit: Color.Trefl,
+      beat: card('9♥'),
+      reason: 'trumped',
+    })
+  })
+
+  it('forces a winning trump when void in the led suit', () => {
+    expect(rule('9♥ A♠', 'A♦', Color.Kier)).toEqual({
+      kind: 'trump',
+      suit: Color.Karo,
+      trump: Color.Kier,
+      beat: null,
+    })
+    expect(rule('A♥ 9♥ A♠', 'A♦ Q♥', Color.Kier)).toEqual({
+      kind: 'trump',
+      suit: Color.Karo,
+      trump: Color.Kier,
+      beat: card('Q♥'),
+    })
+  })
+
+  it('allows any card when neither the suit nor a trump can win', () => {
+    expect(rule('A♠ 9♥', 'A♦')).toMatchObject({ kind: 'any', reason: 'noTrump' })
+    expect(rule('A♠ 9♣', 'A♦', Color.Kier)).toMatchObject({
+      kind: 'any',
+      reason: 'noTrumpCards',
+    })
+    // No forced under-trumping: 9♥ cannot beat Q♥.
+    expect(rule('9♥ A♠', 'A♦ Q♥', Color.Kier)).toEqual({
+      kind: 'any',
+      suit: Color.Karo,
+      beat: card('Q♥'),
+      reason: 'lowTrumps',
+    })
+  })
+})
+
 describe('play hints and marriages', () => {
-  // Seat 0 holds the ♥ marriage and no diamonds; seat 2 has no clubs.
+  // Seat 0 holds the ♥ and ♠ marriages and no diamonds; seat 2 has no clubs.
   const hands = [
     'A♥ K♥ Q♥ 10♣ J♣ 9♠ K♠',
     'A♣ K♣ Q♣ J♥ 9♣ 10♦ A♠',
@@ -131,40 +199,86 @@ describe('play hints and marriages', () => {
   const musik = 'Q♠ J♠ 10♠'
   const play = (deal: Deal, id: string) =>
     deal.apply({ type: 'play', card: cards(id)[0] })
+  const playable = (deal: Deal) => deal.playableCards().map(card => card.id)
   const start = () => toPlay(dealFor(hands, musik), ['J♠', '10♠'])
 
-  it('asks to lead, then to follow suit, then allows any card', () => {
+  it('asks to lead, then to overtake, then allows any card', () => {
     const deal = start()
-    expect(playHint(deal, t)).toBe('Wyjdź dowolną kartą')
+    expect(playHint(deal, t)).toBe('Wyjdź dowolną kartą · K lub Q z pary to meldunek')
     play(deal, '10♣')
-    expect(playHint(deal, t)).toBe('Dołóż do koloru ♣')
+    expect(playable(deal)).toEqual(['A♣'])
+    expect(playHint(deal, t)).toBe('Dołóż do koloru ♣ i przebij 10♣')
     play(deal, 'A♣')
-    expect(playHint(deal, t)).toBe('Brak koloru i atutu — zagraj dowolną kartę')
+    expect(playHint(deal, t)).toBe(
+      'Dowolna karta · nie masz koloru ♣, a atutu jeszcze nie ma',
+    )
+    play(deal, '9♦')
+    // Seat 1 leads K♣; seat 0 keeps only J♣, which cannot beat it.
+    expect(deal.turn).toBe(1)
+    play(deal, 'K♣')
+    play(deal, '9♥')
+    expect(playHint(deal, t)).toBe('Dołóż do koloru ♣ · nie przebijesz K♣')
   })
 
-  it('shows the marriage bonus only when leading from the second trick', () => {
+  it('shows the marriage bonus when leading, from the first trick on', () => {
     const deal = start()
     const king = cards('K♥')[0]
-    expect(meldValue(deal, king)).toBe(0)
-    play(deal, 'A♥')
-    play(deal, 'J♥')
-    play(deal, '9♥')
-    expect(deal.turn).toBe(0)
+    expect(deal.trickNumber).toBe(0)
     expect(meldValue(deal, king)).toBe(100)
+    expect(meldValue(deal, cards('Q♠')[0])).toBe(40)
     expect(meldValue(deal, cards('10♣')[0])).toBe(0)
     play(deal, 'K♥')
     expect(deal.trump).toBe(Color.Kier)
-    expect(playHint(deal, t)).toBe('Brak koloru i atutu — zagraj dowolną kartę')
-    play(deal, '9♣')
-    expect(playHint(deal, t)).toBe('Dołóż do koloru ♥')
+    expect(deal.meldPointsOf(0)).toBe(100)
+    // Following does not declare: seat 1 has J♥ only, seat 2 must beat with 10♥.
+    expect(playHint(deal, t)).toBe('Dołóż do koloru ♥ · nie przebijesz K♥')
+    play(deal, 'J♥')
+    expect(meldValue(deal, cards('10♥')[0])).toBe(0)
+    expect(playable(deal)).toEqual(['10♥'])
+    expect(playHint(deal, t)).toBe('Dołóż do koloru ♥ i przebij K♥')
   })
 
-  it('asks for a trump when out of the led suit', () => {
+  it('asks for a winning trump when out of the led suit', () => {
     const deal = start()
-    for (const id of ['A♥', 'J♥', '9♥', 'K♥', '9♣', '10♥']) play(deal, id)
-    // 10♥ beats the king, so seat 2 leads diamonds; seat 0 has none but holds Q♥.
+    for (const id of ['K♥', 'J♥', '10♥']) play(deal, id)
+    // 10♥ beats the king, so seat 2 leads diamonds; seat 0 has none.
     expect(deal.turn).toBe(2)
     play(deal, 'A♦')
-    expect(playHint(deal, t)).toBe('Brak koloru — przebij atutem ♥')
+    expect(playable(deal)).toEqual(['A♥', 'Q♥'])
+    expect(playHint(deal, t)).toBe('Przebij atutem ♥ · nie masz koloru ♦')
+    play(deal, 'Q♥')
+    expect(playHint(deal, t)).toBe('Dołóż do koloru ♦ · lewa jest już przebita atutem')
+  })
+})
+
+describe('match end', () => {
+  const record = (declarer: number, totals: number[]): DealRecord => ({
+    number: 9,
+    dealer: 0,
+    declarer,
+    contract: 120,
+    made: true,
+    points: [0, 0, 0],
+    deltas: [0, 0, 0],
+    locked: [false, false, false],
+    totals,
+  })
+
+  it('names the declarer who reached the target', () => {
+    expect(matchEnd(record(1, [500, 1010, 640]), [1], 1000)).toEqual({
+      kind: 'declarer',
+      rivals: [],
+    })
+    // A defender with more points does not win against the declarer at 1000.
+    expect(matchEnd(record(1, [1020, 1000, 640]), [1], 1000)).toEqual({
+      kind: 'declarer',
+      rivals: [0],
+    })
+  })
+
+  it('falls back to the highest total', () => {
+    expect(matchEnd(record(1, [1010, 870, 640]), [0], 1000)).toEqual({
+      kind: 'highest',
+    })
   })
 })
