@@ -173,6 +173,15 @@ class Referee {
           this.melds[player] += VALUE[card.color]
           this.trump = card.color
         }
+        // Leading K or Q without declaring shows that the partner is not held.
+        if (!this.trick.length && !this.isMeld(hand, card)) {
+          const figure = card.figure === Figure.K ? Figure.Q : Figure.K
+          if (card.figure === Figure.K || card.figure === Figure.Q) {
+            this.excluded[player].add(
+              ALL_CARDS.find(c => c.figure === figure && c.color === card.color)!.id,
+            )
+          }
+        }
         // Any card that, added to the hand, would forbid this play is not held.
         if (this.trick.length) {
           for (const other of ALL_CARDS) {

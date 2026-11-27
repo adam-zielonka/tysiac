@@ -1,6 +1,22 @@
-import { ALL_CARDS, COLORS, Card, cardById, cardIndex, suitMask } from './Card'
+import {
+  ALL_CARDS,
+  COLORS,
+  Card,
+  Figure,
+  card,
+  cardById,
+  cardIndex,
+  suitMask,
+} from './Card'
 import { Deal } from './Deal'
-import { HAND_SIZE, MUSIK_SIZE, PLAYER_COUNT, nextSeat } from './rules'
+import {
+  BASE_MAX_BID,
+  HAND_SIZE,
+  MARRIAGE_POINTS,
+  MUSIK_SIZE,
+  PLAYER_COUNT,
+  nextSeat,
+} from './rules'
 import { randomInt, shuffle, type Random } from './random'
 
 /** Holder index used for the face-down musik during the auction. */
@@ -10,6 +26,17 @@ const ALL_MASK = (1 << ALL_CARDS.length) - 1
 const SORTED = Card.sortHand([...ALL_CARDS])
 const SORTED_BITS = SORTED.map(card => 1 << cardIndex(card))
 const NO_BANS: readonly number[] = [0, 0, 0, 0]
+/** King and queen of each suit with the marriage value. */
+const MARRIAGES = COLORS.map(color => ({
+  pair: bit(card(Figure.K, color)) | bit(card(Figure.Q, color)),
+  points: MARRIAGE_POINTS[color],
+}))
+/**
+ * Draws checked against the auction before falling back to the first one.
+ * A view constrained by the auction needs about four draws on average (one in
+ * a hundred needs more than fifty), so the fallback is practically never used.
+ */
+const AUCTION_TRIES = 1000
 
 interface Choice {
   /** The card the other defender got from the declarer, when it is a musik card. */
@@ -23,22 +50,41 @@ interface Assignment {
   gift: Card | undefined
 }
 
+/** Marriages a seat provably held: a bid or a raised contract above 120. */
+interface AuctionNeed {
+  seat: number
+  /** Minimum marriage value. */
+  value: number
+  /** The 8 cards held when the contract was set, not the 7 dealt cards. */
+  contract: boolean
+}
+
 /**
  * Builds a complete deal consistent with what the viewer knows: its own hand,
  * played cards, the revealed musik, gifts it gave or received, publicly known
  * marriage partners and the public inference of the play, `s.excluded` (cards
- * a player provably does not hold under the overtaking rule, void suits
- * included) and `s.voids`.
+ * a player provably does not hold under the overtaking rule or after leading
+ * a king or queen without its marriage, void suits included) and `s.voids`.
+ *
+ * The auction is public evidence too: bids and contracts above 120 need
+ * marriages. A seat whose highest bid `b` (`s.maxBids`) exceeds 120 held
+ * marriages worth at least `b − 120` among its seven dealt cards (its hand
+ * and played cards, without the gift it got; for the declarer with its gifts
+ * and without the musik), and a contract raised above the winning bid needs
+ * `contract − 120` in the declarer's eight cards after giving. Deals that
+ * break this are rejected and drawn again.
  *
  * Hidden cards are distributed uniformly among the consistent deals. Once the
  * auction is over there are two hidden holders: a card one of them provably
- * lacks goes to the other and the rest are split at random, which is exact.
- * During the auction the face-down musik is a third holder, but nothing has
- * been played, so nothing is constrained. (Should a hand-made view constrain
- * more holders, the most constrained cards are placed first, weighted by the
- * room left: an approximation.) Constraints are dropped only if no consistent
- * deal exists, which cannot happen for a view of a real deal; so sampling
- * never throws for one.
+ * lacks goes to the other and the rest are split at random, which is exact,
+ * and rejecting deals that contradict the auction keeps it exact. During the
+ * auction the face-down musik is a third holder; nothing has been played, so
+ * only the bids constrain it. (Should a hand-made view constrain more
+ * holders, the most constrained cards are placed first, weighted by the room
+ * left: an approximation.) Constraints are dropped only if no consistent deal
+ * turns up (the auction ones after `AUCTION_TRIES` draws, which only a
+ * very unlikely layout needs); so sampling never throws for a view of a real
+ * deal.
  *
  * A defender does not see which card the declarer handed to the other
  * defender. It is modelled as a random one of the nine cards the viewer did
@@ -166,6 +212,66 @@ export function sampleDeal(view: Deal, random: Random = Math.random): Deal {
     return choices.filter(choice => choice.weight > 0)
   }
 
+  // Marriages the auction proves (the viewer's own hand needs no check).
+  const needs: AuctionNeed[] = []
+  for (const seat of [0, 1, 2]) {
+    const bid = s.maxBids[seat]
+    if (seat !== viewer && bid > BASE_MAX_BID) {
+      needs.push({ seat, value: bid - BASE_MAX_BID, contract: false })
+    }
+  }
+  // A contract above the winning bid was allowed only by marriages held then.
+  if (
+    declarer !== viewer &&
+    declarer >= 0 &&
+    s.contract > Math.max(s.highestBid, BASE_MAX_BID)
+  ) {
+    needs.push({ seat: declarer, value: s.contract - BASE_MAX_BID, contract: true })
+  }
+  const musikMask = maskOf(s.musikCards)
+  let knownGifts = 0
+  for (const gift of s.gifts) knownGifts |= bit(gift.card)
+
+  /** Do the sampled hands (and the unseen gift) fit the auction? */
+  const fitsAuction = (
+    hands: readonly number[],
+    otherGift: Card | undefined,
+  ): boolean => {
+    for (const need of needs) {
+      const seat = need.seat
+      let held = hands[seat] | playedBy[seat]
+      if (!need.contract) {
+        if (seat === declarer) {
+          // The seven dealt cards: also those given away, but not the musik.
+          held = (held | knownGifts | (otherGift ? bit(otherGift) : 0)) & ~musikMask
+        } else {
+          const gift = seat === other ? otherGift : s.gifts.find(g => g.to === seat)?.card
+          if (gift) held &= ~bit(gift)
+        }
+      }
+      let value = 0
+      for (const marriage of MARRIAGES) {
+        if ((held & marriage.pair) === marriage.pair) value += marriage.points
+      }
+      if (value < need.value) return false
+    }
+    return true
+  }
+
+  const otherPlayed = defenderView
+    ? s.played.filter(play => play.player === other).map(play => play.card)
+    : []
+  /** The card the other defender got, when the viewer has not seen it. */
+  const unseenGift = (assignment: Assignment): Card | undefined => {
+    if (!otherGiftUnknown) return undefined
+    if (assignment.gift) return assignment.gift
+    // Any card the other defender holds or has played may have been its gift.
+    const held = assignment.hands[other]
+    const count = bitCount(held)
+    const at = randomInt(random, count + otherPlayed.length)
+    return at < count ? nthCard(held, at) : otherPlayed[at - count]
+  }
+
   const attempt = (ban: readonly number[]): Assignment | null => {
     const choices = musikChoices(ban)
     if (!choices.length) return null
@@ -244,9 +350,35 @@ export function sampleDeal(view: Deal, random: Random = Math.random): Deal {
     return { hands, gift }
   }
 
+  // Rejection sampling: drawing again until the auction fits keeps the deals
+  // uniform among the consistent ones. The first draw is the fallback.
   let assignment: Assignment | null = null
-  for (let i = 0; i < 30 && !assignment; i++) assignment = attempt(banned)
-  for (let i = 0; i < 10 && !assignment; i++) assignment = attempt(NO_BANS)
+  let gift: Card | undefined
+  let fallback: { assignment: Assignment; gift: Card | undefined } | null = null
+  let failures = 0
+  for (let tries = 0; tries < AUCTION_TRIES && !assignment && failures < 30;) {
+    const drawn = attempt(banned)
+    if (!drawn) {
+      failures++
+      continue
+    }
+    tries++
+    const drawnGift = unseenGift(drawn)
+    if (!needs.length || fitsAuction(drawn.hands, drawnGift)) {
+      assignment = drawn
+      gift = drawnGift
+    } else {
+      fallback ??= { assignment: drawn, gift: drawnGift }
+    }
+  }
+  if (!assignment && fallback) {
+    assignment = fallback.assignment
+    gift = fallback.gift
+  }
+  for (let i = 0; i < 10 && !assignment; i++) {
+    assignment = attempt(NO_BANS)
+    if (assignment) gift = unseenGift(assignment)
+  }
   if (!assignment) throw new Error('Could not sample a deal consistent with the view')
 
   const deal = view.clone()
@@ -256,15 +388,7 @@ export function sampleDeal(view: Deal, random: Random = Math.random): Deal {
     if (holder === MUSIK) d.musik = cards
     else d.hands[holder] = cards
   }
-  if (otherGiftUnknown) {
-    // Any card the other defender holds or has played may have been its gift.
-    const pool = [
-      ...d.hands[other],
-      ...s.played.filter(play => play.player === other).map(play => play.card),
-    ]
-    const card = assignment.gift ?? pool[randomInt(random, pool.length)]
-    if (card) d.gifts.push({ to: other, card })
-  }
+  if (gift) d.gifts.push({ to: other, card: gift })
   d.viewer = null
   d.hiddenCounts = null
   return deal
@@ -286,6 +410,14 @@ function cardsOf(mask: number): Card[] {
   for (let i = 0; i < SORTED.length; i++)
     if (mask & SORTED_BITS[i]) result.push(SORTED[i])
   return result
+}
+
+/** The card at `position` of a mask in sorted hand order. */
+function nthCard(mask: number, position: number): Card | undefined {
+  for (let i = 0, seen = 0; i < SORTED.length; i++) {
+    if (mask & SORTED_BITS[i] && seen++ === position) return SORTED[i]
+  }
+  return undefined
 }
 
 /** Card indices (`cardIndex`) of a mask, from the lowest. */

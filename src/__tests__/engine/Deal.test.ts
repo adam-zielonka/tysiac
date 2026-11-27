@@ -143,6 +143,7 @@ describe('Deal', () => {
       expect(deal.turn).toBe(0)
       expect(deal.s.passed).toEqual([false, true, true])
       expect(deal.s.bids).toEqual([100, 'pass', 'pass'])
+      expect(deal.s.maxBids).toEqual([100, 0, 0])
     })
 
     it('goes clockwise, skips players who passed and ends after two passes', () => {
@@ -161,6 +162,10 @@ describe('Deal', () => {
       expect(deal.s.highestBidder).toBe(2)
       expect(deal.s.bids).toEqual(['pass', 120, 130])
       expect(events(deal, { type: 'pass' })).toEqual(['pass', 'bidWon'])
+      // A pass replaces the shown bid; the highest bid of each seat stays public.
+      expect(deal.s.bids).toEqual(['pass', 'pass', 130])
+      expect(deal.s.maxBids).toEqual([0, 120, 130])
+      expect(deal.viewFor(0).s.maxBids).toEqual([0, 120, 130])
       expect(deal.declarer).toBe(2)
       expect(deal.contract).toBe(130)
       expect(deal.turn).toBe(2)
@@ -450,10 +455,12 @@ describe('Deal', () => {
         [false, false, true, false],
         [true, true, false, false],
       ])
+      // Seat 2 later led the other half of its declared ♠ marriage without a
+      // meld, which also excludes the (already played) Q♠.
       expect(deal.s.excluded.map(maskIds)).toEqual([
         'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♠ 10♠ K♠ Q♠ J♠ 9♠',
         'A♦ 10♦ A♣ 10♣ K♣ Q♣ J♣ 9♣',
-        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦ J♦ 9♦',
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦ J♦ 9♦ Q♠',
       ])
       expect(deal.result()).toEqual({
         declarer: 2,
@@ -550,10 +557,11 @@ describe('Deal', () => {
       expect(maskIds(deal.s.excluded[1])).toBe('A♣ 10♣ K♣ Q♣ J♣ 9♣ A♠ 10♠ K♠')
 
       run(deal, '10♣, A♦, J♣')
+      // Seat 2 led Q♦ in trick 3 without declaring: it has no K♦.
       expect(excluded()).toEqual([
         'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦ J♦ 9♦ A♠',
         'A♣ 10♣ K♣ Q♣ J♣ 9♣ A♠ 10♠ K♠',
-        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♣',
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ K♦ A♣',
       ])
       expect(deal.s.voids.map(row => row.slice(1))).toEqual([
         [true, true, false, false],

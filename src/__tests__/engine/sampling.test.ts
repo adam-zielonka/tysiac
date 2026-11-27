@@ -7,9 +7,10 @@ import {
   cardIndex,
   cards,
 } from '../../engine/Card'
-import { Deal, actionKey } from '../../engine/Deal'
+import { Deal, actionKey, type Action } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import { pick, seededRandom, type Random } from '../../engine/random'
+import { marriageValue } from '../../engine/rules'
 import { sampleDeal, thirdSeat } from '../../engine/sampling'
 import { collectCards, dealWith, expectComplete, maskIds, run } from './helpers'
 
@@ -153,10 +154,12 @@ const nextOf = (seat: number) => (seat + 1) % 3
  * player was shown to lack, voids included): the other defender's gift is uniform over
  * the nine cards the viewer did not get (so each musik card has prior 1/9,
  * and a musik card the declarer played was not it), and the remaining unknown
- * cards are split uniformly. `null` when the view does not
- * have hidden musik cards.
+ * cards are split uniformly. A non-musik gift is any of the other
+ * defender's eight cards. Splits and gifts that contradict the auction (a bid
+ * or a raised contract above 120 without the marriages it needs) are left
+ * out. `null` when the view does not have hidden musik cards.
  */
-function exactPosterior(view: Deal): Map<Card, number> | null {
+function exactPosterior(view: Deal, auction = true): Map<Card, number> | null {
   const s = view.s
   const viewer = s.viewer!
   const declarer = s.declarer
@@ -190,12 +193,58 @@ function exactPosterior(view: Deal): Map<Card, number> | null {
     ).length
     const prior = given.length ? 1 / 9 : (9 - pool) / 9
     const restToDeclarer = mine.filter(card => rest.includes(card)).length
-    const weight = prior / binomial(rest.length, restToDeclarer)
-    sum += weight
-    mine.forEach(card => totals.set(card, totals.get(card)! + weight))
+    const otherCards = [...theirs, ...playedBy(view, other)]
+    const gifts = given.length ? given : otherCards
+    for (const gift of gifts) {
+      if (auction && !fitsAuction(view, mine, theirs, gift)) continue
+      const weight = prior / binomial(rest.length, restToDeclarer) / gifts.length
+      sum += weight
+      mine.forEach(card => totals.set(card, totals.get(card)! + weight))
+    }
   }
   if (!sum) return null
   return new Map([...totals].map(([card, total]) => [card, total / sum]))
+}
+
+function playedBy(deal: Deal, player: number): Card[] {
+  return deal.s.played.filter(play => play.player === player).map(play => play.card)
+}
+
+/**
+ * Seven dealt cards of `seat` in a full (or sampled) deal: its hand and
+ * played cards without the gift it got; the declarer's with the cards it gave
+ * away and without the musik.
+ */
+function dealtHand(deal: Deal, seat: number): Card[] {
+  const s = deal.s
+  const cardsHeld = [...s.hands[seat], ...playedBy(deal, seat)]
+  if (seat === s.declarer && s.musikCards.length) {
+    return [...cardsHeld, ...s.gifts.map(gift => gift.card)].filter(
+      card => !s.musikCards.includes(card),
+    )
+  }
+  return cardsHeld.filter(card => !s.gifts.some(g => g.to === seat && g.card === card))
+}
+
+/**
+ * The auction check of `exactPosterior` for a defender view in play: the
+ * declarer holds `mine` and the other defender `theirs` (hidden cards), and
+ * `gift` went to the other defender.
+ */
+function fitsAuction(view: Deal, mine: Card[], theirs: Card[], gift: Card): boolean {
+  const s = view.s
+  const declarer = s.declarer
+  const other = thirdSeat(s.viewer!, declarer)
+  const eight = [...mine, ...playedBy(view, declarer)]
+  const dealt = [...eight, ...s.gifts.map(g => g.card), gift].filter(
+    card => !s.musikCards.includes(card),
+  )
+  const otherDealt = [...theirs, ...playedBy(view, other)].filter(card => card !== gift)
+  return (
+    marriageValue(dealt) >= s.maxBids[declarer] - 120 &&
+    marriageValue(otherDealt) >= s.maxBids[other] - 120 &&
+    (s.contract <= s.highestBid || marriageValue(eight) >= s.contract - 120)
+  )
 }
 
 /** Mostly short auctions, random legal moves otherwise. */
@@ -554,6 +603,157 @@ describe('sampleDeal', () => {
     expect(checked).toBe(8)
     expect(partial).toBeGreaterThanOrEqual(3)
   }, 60_000)
+
+  it('matches the exact posterior when the auction proves marriages', () => {
+    const random = seededRandom(31)
+    let checked = 0
+    for (let n = 0; checked < 5 && n < 3000; n++) {
+      const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
+      // Bid and raise the contract as high as allowed half of the time.
+      while (!deal.isFinished && (deal.phase !== 'play' || deal.trickNumber < 3)) {
+        const actions = deal.legalActions()
+        const high = deal.phase === 'bidding' || deal.phase === 'contract'
+        deal.apply(high && random() < 0.5 ? actions.at(-1)! : randomAction(deal, random))
+      }
+      if (deal.isFinished) continue
+      const viewer = deal.turn === deal.declarer ? nextOf(deal.declarer) : deal.turn
+      const view = deal.viewFor(viewer)
+      const exact = exactPosterior(view)
+      const free = exactPosterior(view, false)
+      // Only views where the auction changes where the cards are.
+      if (!exact || !free) continue
+      if (![...exact].some(([card, p]) => Math.abs(p - free.get(card)!) > 0.1)) continue
+      const runs = 4000
+      const withDeclarer = new Map<Card, number>()
+      for (let i = 0; i < runs; i++) {
+        const sample = sampleDeal(view, random)
+        for (const card of sample.hand(view.declarer)) {
+          withDeclarer.set(card, (withDeclarer.get(card) ?? 0) + 1)
+        }
+      }
+      for (const [card, probability] of exact) {
+        expect(Math.abs((withDeclarer.get(card) ?? 0) / runs - probability)).toBeLessThan(
+          0.04,
+        )
+      }
+      checked++
+    }
+    expect(checked).toBe(5)
+  }, 60_000)
+
+  describe('the public history', () => {
+    /**
+     * Rebuilds the deal behind `sample` and replays `history` on it, with the
+     * sampled gifts in place of the real ones. Returns the first action that
+     * is illegal there, or `null` when the whole history is legal.
+     */
+    function replay(sample: Deal, history: readonly Action[]): string | null {
+      const s = sample.s
+      const musik = s.musikCards.length ? s.musikCards : s.musik
+      const deck = [
+        ...dealtHand(sample, 0),
+        ...dealtHand(sample, 1),
+        ...dealtHand(sample, 2),
+      ]
+      const rebuilt = Deal.deal(s.dealer, [...deck, ...musik])
+      for (const action of history) {
+        const step =
+          action.type === 'give'
+            ? { ...action, card: s.gifts.find(gift => gift.to === action.to)!.card }
+            : action
+        if (!rebuilt.isLegal(step)) return `${actionKey(step)} in ${rebuilt.phase}`
+        rebuilt.apply(step)
+      }
+      return null
+    }
+
+    it('keeps every bid, contract and card of the history legal', () => {
+      const random = seededRandom(41)
+      let samples = 0
+      let proven = 0
+      for (let n = 0; n < 400; n++) {
+        const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
+        const history: Action[] = []
+        for (;;) {
+          for (const seat of [0, 1, 2]) {
+            const view = deal.viewFor(seat)
+            if (view.s.maxBids.some((bid, p) => p !== seat && bid > 120)) proven++
+            const failed = replay(sampleDeal(view, random), history)
+            check(!failed, () => `deal ${n}, seat ${seat}: ${failed} is illegal`)
+            samples++
+          }
+          if (deal.isFinished) break
+          // High auctions and contracts half of the time, kings and queens led often.
+          const actions = deal.legalActions()
+          const high =
+            (deal.phase === 'bidding' || deal.phase === 'contract') && random() < 0.5
+          const action = high ? actions.at(-1)! : randomAction(deal, random)
+          history.push(action)
+          deal.apply(action)
+        }
+      }
+      expect(samples).toBeGreaterThan(400 * 40)
+      expect(proven).toBeGreaterThan(1000)
+    }, 60_000)
+
+    it('gives a seat that bid 140 the only marriage it could have held', () => {
+      // Seat 1 bids 140 with K♥ Q♥; the musik K♠ Q♦ K♣ rules out every other
+      // marriage among its seven dealt cards.
+      const deal = dealWith(
+        2,
+        ['A♠ 10♠ A♦ 10♦ J♣ 9♣ 9♠', 'K♥ Q♥ A♥ J♠ Q♠ 9♦ J♦', '10♥ J♥ 9♥ K♦ Q♣ A♣ 10♣'],
+        'K♠ Q♦ K♣',
+      )
+      run(deal, '140, pass, pass, take, g9♦>2, gJ♦>0, c140')
+      expect(deal.s.maxBids).toEqual([100, 140, 0])
+      const view = deal.viewFor(0)
+      const random = seededRandom(42)
+      for (let i = 0; i < 2000; i++) {
+        const sample = sampleDeal(view, random)
+        const dealt = dealtHand(sample, 1)
+        check(
+          dealt.includes(cards('K♥')[0]) && dealt.includes(cards('Q♥')[0]),
+          () => `seat 1 bid 140 without a marriage: ${key(dealt)}`,
+        )
+      }
+    })
+
+    it('needs the marriages of a contract raised above the bid in the eight cards', () => {
+      // Seat 2 bids 120, keeps K♥ Q♥ and raises the contract to 220.
+      const deal = dealWith(
+        0,
+        ['A♠ 10♠ A♦ 10♦ J♣ 9♣ 9♠', 'J♠ Q♠ 9♦ J♦ A♣ 10♣ Q♣', 'K♥ Q♥ A♥ 10♥ J♥ 9♥ K♦'],
+        'K♠ Q♦ K♣',
+      )
+      run(deal, '120, pass, pass, take, g9♥>0, gK♦>1, c220, A♥')
+      expect(deal.s.highestBid).toBe(120)
+      expect(deal.contract).toBe(220)
+      for (const seat of [0, 1]) {
+        const random = seededRandom(43 + seat)
+        for (let i = 0; i < 1000; i++) {
+          const sample = sampleDeal(deal.viewFor(seat), random)
+          const eight = [...sample.hand(2), ...playedBy(sample, 2)]
+          check(marriageValue(eight) >= 100, () => `contract 220 with ${key(eight)}`)
+        }
+      }
+    })
+
+    it('keeps the partner of a king led without a marriage away from the leader', () => {
+      const deal = dealWith(
+        2,
+        ['K♠ A♥ 10♥ A♦ 10♦ A♣ 10♣', 'Q♠ J♠ 9♠ K♥ Q♥ J♥ 9♥', 'A♠ 10♠ K♦ Q♦ J♦ 9♦ K♣'],
+        'Q♣ J♣ 9♣',
+      )
+      run(deal, 'pass, pass, take, gJ♣>1, g9♣>2, c100, K♠, 9♠')
+      expect(deal.trump).toBeNull()
+      expect(maskIds(deal.s.excluded[0])).toBe('Q♠')
+      const random = seededRandom(44)
+      for (let i = 0; i < 2000; i++) {
+        const sample = sampleDeal(deal.viewFor(2), random)
+        check(!sample.hand(0).includes(cards('Q♠')[0]), () => 'Q♠ with the leader')
+      }
+    })
+  })
 
   it('places known marriage partners with their holder', () => {
     const deal = dealWith(

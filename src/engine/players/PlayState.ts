@@ -135,9 +135,13 @@ export class PlayState {
     const hand = this.hands[player]
     const suit = SUIT_OF[card]
     if (!this.trick.length) {
+      const order = ORDER_OF[card]
       if (this.isMeld(card)) {
         this.trump = suit
         this.meldPoints[player] += MELD_VALUE[suit]
+      } else if (order === KING || order === QUEEN) {
+        // Declaring is automatic: the leader does not hold the partner.
+        this.excluded[player] |= 1 << (card - order + (order === KING ? QUEEN : KING))
       }
     } else {
       const led = SUIT_OF[this.trick[0]]

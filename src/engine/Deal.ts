@@ -10,6 +10,7 @@ import {
   bidRange,
   BID_STEP,
   cardPoints,
+  excludedByLead,
   excludedByPlay,
   isMeldLead,
   legalPlays,
@@ -83,6 +84,11 @@ export interface DealState {
   /** Musik as revealed to everyone after the auction (empty before). */
   musikCards: Card[]
   bids: Bid[]
+  /**
+   * Highest numeric bid of each seat (the opener's forced 100 included, 0 for
+   * none). Public and kept after a pass: a bid above 120 proves marriages.
+   */
+  maxBids: number[]
   passed: boolean[]
   highestBid: number
   highestBidder: number
@@ -171,6 +177,8 @@ export class Deal {
     const opener = nextSeat(dealer)
     const bids: Bid[] = [null, null, null]
     bids[opener] = OPENING_BID
+    const maxBids = [0, 0, 0]
+    maxBids[opener] = OPENING_BID
     return new Deal({
       dealer,
       phase: 'bidding',
@@ -179,6 +187,7 @@ export class Deal {
       musik: deck.slice(PLAYER_COUNT * HAND_SIZE),
       musikCards: [],
       bids,
+      maxBids,
       passed: [false, false, false],
       highestBid: OPENING_BID,
       highestBidder: opener,
@@ -216,6 +225,7 @@ export class Deal {
       musik: s.musik.slice(),
       musikCards: s.musikCards.slice(),
       bids: s.bids.slice(),
+      maxBids: s.maxBids.slice(),
       passed: s.passed.slice(),
       highestBid: s.highestBid,
       highestBidder: s.highestBidder,
@@ -417,6 +427,7 @@ export class Deal {
     switch (action.type) {
       case 'bid':
         s.bids[player] = action.value
+        s.maxBids[player] = action.value
         s.highestBid = action.value
         s.highestBidder = player
         return [
@@ -472,17 +483,20 @@ export class Deal {
   }
 
   /**
-   * What a legal follow reveals under the overtaking rule (`excludedByPlay`):
-   * the cards whose presence would have made it illegal. A suit excluded as
-   * a whole is a void (only the void rules exclude a nine).
+   * What a legal play reveals: after a follow, the cards whose presence would
+   * have made it illegal under the overtaking rule (`excludedByPlay`); after a
+   * king or queen led without a marriage, its partner (`excludedByLead`). A
+   * suit excluded as a whole is a void (only the void rules exclude a nine).
    */
   private inferFromPlay(player: number, card: Card): void {
     const s = this.s
-    const mask = excludedByPlay(
-      s.trick.map(play => play.card),
-      s.trump,
-      card,
-    )
+    const mask = s.trick.length
+      ? excludedByPlay(
+          s.trick.map(play => play.card),
+          s.trump,
+          card,
+        )
+      : excludedByLead(s.hands[player], card)
     if (!mask) return
     const excluded = (s.excluded[player] |= mask)
     for (const color of COLORS) {
@@ -502,7 +516,7 @@ export class Deal {
       s.knownHolders[card.marriagePartner!.id] = player
       events.push({ type: 'meld', player, color: card.color, points })
     }
-    if (s.trick.length) this.inferFromPlay(player, card)
+    this.inferFromPlay(player, card)
     hand.splice(hand.indexOf(card), 1)
     delete s.knownHolders[card.id]
     const play = { player, card }
