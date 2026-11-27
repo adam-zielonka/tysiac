@@ -14,7 +14,11 @@ export enum Color {
   Pik,
 }
 
-/** Suits in marriage value order: ♥ 100, ♦ 80, ♣ 60, ♠ 40. */
+/**
+ * Suits in deck order (♥ ♦ ♣ ♠), the order of `ALL_CARDS` and card indices.
+ * It is not the marriage value order: that depends on the deal's meld system
+ * (`MARRIAGE_VALUES` in rules).
+ */
 export const COLORS: readonly Color[] = [Color.Kier, Color.Karo, Color.Trefl, Color.Pik]
 
 /** Figures from the strongest to the weakest in Tysiąc: A, 10, K, Q, J, 9. */

@@ -2,7 +2,7 @@ import type { Action, Deal } from '../Deal'
 import { BASE_MAX_BID, BID_STEP, bidRange, nextSeat } from '../rules'
 import type { Random } from '../random'
 import { sampleDeal } from '../sampling'
-import { cardAt, cardIndex, marriageTotal, maskOf } from './bits'
+import { cardAt, cardIndex, marriageTotal, maskOf, meldValuesOf } from './bits'
 import { giftOrder, tacticalCard } from './heuristics'
 import { MATCH_WIN_BONUS, matchDeltas, moodOf, valueToWin } from './match'
 import { PlayState } from './PlayState'
@@ -81,16 +81,17 @@ export function auctionOutcomes(
   deadline = Infinity,
 ): number[] {
   const me = view.turn
+  const values = meldValuesOf(view)
   const outcomes: number[] = []
   for (let i = 0; i < samples && !(i && pastDeadline(deadline)); i++) {
     const sample = sampleDeal(view, random)
     const hands = sample.s.hands.map(hand => maskOf(hand))
     const full = hands[me] | maskOf(sample.s.musik)
-    const order = giftOrder(full)
+    const order = giftOrder(full, values)
     hands[me] = full & ~(1 << order[0]) & ~(1 << order[1])
     hands[nextSeat(me)] |= 1 << order[0]
     hands[nextSeat(me, 2)] |= 1 << order[1]
-    const st = rollout(new PlayState(hands, me, view.s.highestBid, me))
+    const st = rollout(new PlayState(hands, me, view.s.highestBid, me, values))
     outcomes.push(st.points(me))
   }
   return outcomes
@@ -169,9 +170,10 @@ export function monteCarloGift(
 ): Action {
   const me = view.turn
   const toWin = valueToWin(scores, me)
+  const values = meldValuesOf(view)
   const hand = maskOf(view.hand(me))
   const recipients = view.pendingRecipients()
-  const order = giftOrder(hand).slice(0, candidates)
+  const order = giftOrder(hand, values).slice(0, candidates)
   const options: number[][] = []
   for (const first of order) {
     if (recipients.length < 2) options.push([first])
@@ -196,9 +198,9 @@ export function monteCarloGift(
         hands[me] &= ~(1 << card)
         hands[recipients[i]] |= 1 << card
       })
-      return rollout(new PlayState(hands, me, bid, me)).points(me)
+      return rollout(new PlayState(hands, me, bid, me, values)).points(me)
     })
-    const limit = Math.max(bid, BASE_MAX_BID + marriageTotal(kept))
+    const limit = Math.max(bid, BASE_MAX_BID + marriageTotal(kept, values))
     const mean = outcomes.reduce((sum, value) => sum + value, 0) / outcomes.length
     const options = bidRange(bid, limit)
     const value = bestContract(outcomes, options, toWin)

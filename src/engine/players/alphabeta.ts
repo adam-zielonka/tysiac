@@ -1,7 +1,6 @@
 import { TRICK_COUNT } from '../rules'
 import {
   KING,
-  MELD_VALUE,
   ORDER_OF,
   POINTS_OF,
   QUEEN,
@@ -118,6 +117,8 @@ export class AlphaBeta {
   private cards = new Int8Array(TRICK_COUNT * 3)
   private declarer: number
   private contract: number
+  /** Marriage value per suit index in this deal. */
+  private meldValues: readonly number[]
   private declarerPoints: number
   private defenderMelds: number
   private nodes = 0
@@ -144,6 +145,7 @@ export class AlphaBeta {
     st.trick.forEach((card, i) => (this.cards[st.trickNumber * 3 + i] = card))
     this.declarer = st.declarer
     this.contract = st.contract
+    this.meldValues = st.meldValues
     this.declarerPoints = st.points(st.declarer)
     this.defenderMelds = st.meldPoints.reduce(
       (sum, value, player) => (player === st.declarer ? sum : sum + value),
@@ -235,10 +237,11 @@ export class AlphaBeta {
       const order = ORDER_OF[card]
       const suit = SUIT_OF[card]
       if ((order === KING || order === QUEEN) && hasMarriage(hand, suit)) {
+        const meld = this.meldValues[suit]
         this.trump = suit
-        if (player === this.declarer) this.declarerPoints += MELD_VALUE[suit]
-        else this.defenderMelds += MELD_VALUE[suit]
-        if (player === this.self) this.selfPoints += MELD_VALUE[suit]
+        if (player === this.declarer) this.declarerPoints += meld
+        else this.defenderMelds += meld
+        if (player === this.self) this.selfPoints += meld
       }
     }
     this.hands[player] = hand & ~(1 << card)
@@ -427,7 +430,7 @@ export class AlphaBeta {
     for (let player = 0; player < 3; player++) {
       let melds = 0
       for (let suit = 0; suit < SUITS; suit++) {
-        if (hasMarriage(h[player], suit)) melds += MELD_VALUE[suit]
+        if (hasMarriage(h[player], suit)) melds += this.meldValues[suit]
       }
       if (player === declarer) declarerMelds = melds
       else defenderMelds += melds * (player === this.leader ? 0.8 : 0.4)
@@ -496,7 +499,7 @@ export class AlphaBeta {
           (order === KING || order === QUEEN) &&
           hasMarriage(this.hands[player], suit)
         ) {
-          score = 1000 + MELD_VALUE[suit]
+          score = 1000 + this.meldValues[suit]
         } else if (top) score = 500 + points + (suit === trump ? 30 : 0)
         else score = 100 - points * 2 - (suit === trump ? 20 : 0)
       } else if (beatsIndex(card, winning, trump)) {

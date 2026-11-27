@@ -8,7 +8,7 @@ import {
   t,
 } from './i18n'
 import { strategies } from './engine/strategies'
-import { PACES } from './elements/ui'
+import { MELD_SYSTEM_NAMES, PACES } from './elements/ui'
 
 const sources = import.meta.glob(
   ['./elements/*.svelte', './elements/*.ts', '!./elements/*.test.ts'],
@@ -65,6 +65,7 @@ describe('translations', () => {
       '{count} karty',
       '{count} kart',
       ...PACES.map(pace => pace.label),
+      ...Object.values(MELD_SYSTEM_NAMES),
       // Persona names are proper nouns; only "Ty" (you) is translated.
       strategies.Human.name,
       ...Object.values(strategies).flatMap(strategy => [

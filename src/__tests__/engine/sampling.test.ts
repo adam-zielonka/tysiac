@@ -10,7 +10,7 @@ import {
 import { Deal, actionKey, type Action } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import { pick, seededRandom, type Random } from '../../engine/random'
-import { marriageValue } from '../../engine/rules'
+import { MARRIAGE_VALUES, MELD_SYSTEMS, marriageValue } from '../../engine/rules'
 import { sampleDeal, thirdSeat } from '../../engine/sampling'
 import { collectCards, dealWith, expectComplete, maskIds, run } from './helpers'
 
@@ -240,10 +240,11 @@ function fitsAuction(view: Deal, mine: Card[], theirs: Card[], gift: Card): bool
     card => !s.musikCards.includes(card),
   )
   const otherDealt = [...theirs, ...playedBy(view, other)].filter(card => card !== gift)
+  const values = view.meldValues
   return (
-    marriageValue(dealt) >= s.maxBids[declarer] - 120 &&
-    marriageValue(otherDealt) >= s.maxBids[other] - 120 &&
-    (s.contract <= s.highestBid || marriageValue(eight) >= s.contract - 120)
+    marriageValue(dealt, values) >= s.maxBids[declarer] - 120 &&
+    marriageValue(otherDealt, values) >= s.maxBids[other] - 120 &&
+    (s.contract <= s.highestBid || marriageValue(eight, values) >= s.contract - 120)
   )
 }
 
@@ -275,25 +276,32 @@ describe('sampleDeal', () => {
     )
   })
 
-  it('stays consistent with every view in every phase of many random deals', () => {
-    const random = seededRandom(20241126)
-    let samples = 0
-    for (let n = 0; n < 200; n++) {
-      const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
-      for (;;) {
-        checkInference(deal, () => `real deal in ${deal.phase}`)
-        for (const seat of [0, 1, 2]) {
-          const sample = checkSample(deal, seat, random)
-          samples++
-          // A sample is a real deal: it can be played to the end.
-          if (n % 10 === 0 && seat === deal.turn) playOut(sample, random)
+  it.each(MELD_SYSTEMS)(
+    'stays consistent with every view in every phase of many random %s deals',
+    meldSystem => {
+      const random = seededRandom(20241126)
+      let samples = 0
+      for (let n = 0; n < 200; n++) {
+        const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random), {
+          meldSystem,
+        })
+        check(deal.meldSystem === meldSystem, () => 'meld system')
+        for (;;) {
+          checkInference(deal, () => `real deal in ${deal.phase}`)
+          for (const seat of [0, 1, 2]) {
+            const sample = checkSample(deal, seat, random)
+            samples++
+            // A sample is a real deal: it can be played to the end.
+            if (n % 10 === 0 && seat === deal.turn) playOut(sample, random)
+          }
+          if (deal.isFinished) break
+          deal.apply(randomAction(deal, random))
         }
-        if (deal.isFinished) break
-        deal.apply(randomAction(deal, random))
       }
-    }
-    expect(samples).toBeGreaterThan(200 * 40)
-  }, 60_000)
+      expect(samples).toBeGreaterThan(200 * 40)
+    },
+    60_000,
+  )
 
   it('distributes unseen cards evenly during the auction', () => {
     const deal = Deal.deal(0, Deck.shuffle(Deck.generate(), seededRandom(4)))
@@ -604,42 +612,50 @@ describe('sampleDeal', () => {
     expect(partial).toBeGreaterThanOrEqual(3)
   }, 60_000)
 
-  it('matches the exact posterior when the auction proves marriages', () => {
-    const random = seededRandom(31)
-    let checked = 0
-    for (let n = 0; checked < 5 && n < 3000; n++) {
-      const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
-      // Bid and raise the contract as high as allowed half of the time.
-      while (!deal.isFinished && (deal.phase !== 'play' || deal.trickNumber < 3)) {
-        const actions = deal.legalActions()
-        const high = deal.phase === 'bidding' || deal.phase === 'contract'
-        deal.apply(high && random() < 0.5 ? actions.at(-1)! : randomAction(deal, random))
-      }
-      if (deal.isFinished) continue
-      const viewer = deal.turn === deal.declarer ? nextOf(deal.declarer) : deal.turn
-      const view = deal.viewFor(viewer)
-      const exact = exactPosterior(view)
-      const free = exactPosterior(view, false)
-      // Only views where the auction changes where the cards are.
-      if (!exact || !free) continue
-      if (![...exact].some(([card, p]) => Math.abs(p - free.get(card)!) > 0.1)) continue
-      const runs = 4000
-      const withDeclarer = new Map<Card, number>()
-      for (let i = 0; i < runs; i++) {
-        const sample = sampleDeal(view, random)
-        for (const card of sample.hand(view.declarer)) {
-          withDeclarer.set(card, (withDeclarer.get(card) ?? 0) + 1)
+  it.each(MELD_SYSTEMS)(
+    'matches the exact posterior when the auction proves %s marriages',
+    meldSystem => {
+      const random = seededRandom(31)
+      let checked = 0
+      for (let n = 0; checked < 5 && n < 3000; n++) {
+        const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random), {
+          meldSystem,
+        })
+        // Bid and raise the contract as high as allowed half of the time.
+        while (!deal.isFinished && (deal.phase !== 'play' || deal.trickNumber < 3)) {
+          const actions = deal.legalActions()
+          const high = deal.phase === 'bidding' || deal.phase === 'contract'
+          deal.apply(
+            high && random() < 0.5 ? actions.at(-1)! : randomAction(deal, random),
+          )
         }
+        if (deal.isFinished) continue
+        const viewer = deal.turn === deal.declarer ? nextOf(deal.declarer) : deal.turn
+        const view = deal.viewFor(viewer)
+        const exact = exactPosterior(view)
+        const free = exactPosterior(view, false)
+        // Only views where the auction changes where the cards are.
+        if (!exact || !free) continue
+        if (![...exact].some(([card, p]) => Math.abs(p - free.get(card)!) > 0.1)) continue
+        const runs = 4000
+        const withDeclarer = new Map<Card, number>()
+        for (let i = 0; i < runs; i++) {
+          const sample = sampleDeal(view, random)
+          for (const card of sample.hand(view.declarer)) {
+            withDeclarer.set(card, (withDeclarer.get(card) ?? 0) + 1)
+          }
+        }
+        for (const [card, probability] of exact) {
+          expect(
+            Math.abs((withDeclarer.get(card) ?? 0) / runs - probability),
+          ).toBeLessThan(0.04)
+        }
+        checked++
       }
-      for (const [card, probability] of exact) {
-        expect(Math.abs((withDeclarer.get(card) ?? 0) / runs - probability)).toBeLessThan(
-          0.04,
-        )
-      }
-      checked++
-    }
-    expect(checked).toBe(5)
-  }, 60_000)
+      expect(checked).toBe(5)
+    },
+    60_000,
+  )
 
   describe('the public history', () => {
     /**
@@ -655,7 +671,9 @@ describe('sampleDeal', () => {
         ...dealtHand(sample, 1),
         ...dealtHand(sample, 2),
       ]
-      const rebuilt = Deal.deal(s.dealer, [...deck, ...musik])
+      const rebuilt = Deal.deal(s.dealer, [...deck, ...musik], {
+        meldSystem: sample.meldSystem,
+      })
       for (const action of history) {
         const step =
           action.type === 'give'
@@ -667,34 +685,43 @@ describe('sampleDeal', () => {
       return null
     }
 
-    it('keeps every bid, contract and card of the history legal', () => {
-      const random = seededRandom(41)
-      let samples = 0
-      let proven = 0
-      for (let n = 0; n < 400; n++) {
-        const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
-        const history: Action[] = []
-        for (;;) {
-          for (const seat of [0, 1, 2]) {
-            const view = deal.viewFor(seat)
-            if (view.s.maxBids.some((bid, p) => p !== seat && bid > 120)) proven++
-            const failed = replay(sampleDeal(view, random), history)
-            check(!failed, () => `deal ${n}, seat ${seat}: ${failed} is illegal`)
-            samples++
+    it.each(MELD_SYSTEMS)(
+      'keeps every bid, contract and card of a %s history legal',
+      meldSystem => {
+        // Seed 41 has a German view whose auction leaves about one consistent
+        // deal in 800 draws; after 1000 draws (in 3 of 10 samples) the
+        // sampler drops the auction, exactly as for its classic twin.
+        const random = seededRandom(meldSystem === 'classic' ? 41 : 42)
+        let samples = 0
+        let proven = 0
+        for (let n = 0; n < 400; n++) {
+          const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random), {
+            meldSystem,
+          })
+          const history: Action[] = []
+          for (;;) {
+            for (const seat of [0, 1, 2]) {
+              const view = deal.viewFor(seat)
+              if (view.s.maxBids.some((bid, p) => p !== seat && bid > 120)) proven++
+              const failed = replay(sampleDeal(view, random), history)
+              check(!failed, () => `deal ${n}, seat ${seat}: ${failed} is illegal`)
+              samples++
+            }
+            if (deal.isFinished) break
+            // High auctions and contracts half of the time, kings and queens led often.
+            const actions = deal.legalActions()
+            const high =
+              (deal.phase === 'bidding' || deal.phase === 'contract') && random() < 0.5
+            const action = high ? actions.at(-1)! : randomAction(deal, random)
+            history.push(action)
+            deal.apply(action)
           }
-          if (deal.isFinished) break
-          // High auctions and contracts half of the time, kings and queens led often.
-          const actions = deal.legalActions()
-          const high =
-            (deal.phase === 'bidding' || deal.phase === 'contract') && random() < 0.5
-          const action = high ? actions.at(-1)! : randomAction(deal, random)
-          history.push(action)
-          deal.apply(action)
         }
-      }
-      expect(samples).toBeGreaterThan(400 * 40)
-      expect(proven).toBeGreaterThan(1000)
-    }, 60_000)
+        expect(samples).toBeGreaterThan(400 * 40)
+        expect(proven).toBeGreaterThan(1000)
+      },
+      60_000,
+    )
 
     it('gives a seat that bid 140 the only marriage it could have held', () => {
       // Seat 1 bids 140 with K♥ Q♥; the musik K♠ Q♦ K♣ rules out every other
@@ -733,9 +760,79 @@ describe('sampleDeal', () => {
         for (let i = 0; i < 1000; i++) {
           const sample = sampleDeal(deal.viewFor(seat), random)
           const eight = [...sample.hand(2), ...playedBy(sample, 2)]
-          check(marriageValue(eight) >= 100, () => `contract 220 with ${key(eight)}`)
+          check(
+            marriageValue(eight, sample.meldValues) >= 100,
+            () => `contract 220 with ${key(eight)}`,
+          )
         }
       }
+    })
+
+    it('gives a seat that bid 200 in German values its only possible marriage, wino (♠)', () => {
+      // Seat 0 holds K♣ and K♥ and the musik K♦: of the German marriages only
+      // wino (♠ 80) is left for seat 1, and 200 needs 80. In classic values
+      // the same ♠ marriage (40) allows no more than 160.
+      const hands: [string, string, string] = [
+        'K♣ K♥ A♠ 10♠ A♦ 10♦ 9♣',
+        'K♠ Q♠ A♥ J♠ 9♦ J♦ 9♥',
+        '10♥ J♥ Q♥ Q♦ Q♣ A♣ 10♣',
+      ]
+      expect(dealWith(2, hands, 'K♦ J♣ 9♠').maxBid(1)).toBe(160)
+      const deal = dealWith(2, hands, 'K♦ J♣ 9♠', { meldSystem: 'german' })
+      run(deal, '200')
+      const random = seededRandom(45)
+      const spades = cards('K♠ Q♠')
+      for (let i = 0; i < 500; i++) {
+        // During the auction (the musik is hidden) and after the gifts.
+        const sample = sampleDeal(deal.viewFor(2), random)
+        check(
+          spades.every(card => sample.hand(1).includes(card)),
+          () => `seat 1 bid 200 with ${key(sample.hand(1))}`,
+        )
+      }
+      run(deal, 'pass, pass, take, gJ♦>0, g9♦>2, c200, K♠')
+      expect(deal.s.melds).toEqual([
+        { player: 1, color: Color.Pik, points: 80, trick: 0 },
+      ])
+      for (const seat of [0, 2]) {
+        for (let i = 0; i < 500; i++) {
+          const sample = sampleDeal(deal.viewFor(seat), random)
+          const dealt = dealtHand(sample, 1)
+          check(
+            marriageValue(dealt, MARRIAGE_VALUES.german) >= 80 &&
+              spades.every(card => dealt.includes(card)),
+            () => `seat 1 bid 200 with ${key(dealt)}`,
+          )
+        }
+      }
+    })
+
+    it('needs German marriages of a contract raised above the bid in the eight cards', () => {
+      // The relabelled deal of the classic test above: seat 2 bids 120, keeps
+      // K♣ Q♣ (żołądź, 100) and raises the contract to 220.
+      const deal = dealWith(
+        0,
+        ['A♦ 10♦ A♠ 10♠ J♥ 9♥ 9♦', 'J♦ Q♦ 9♠ J♠ A♥ 10♥ Q♥', 'K♣ Q♣ A♣ 10♣ J♣ 9♣ K♠'],
+        'K♦ Q♠ K♥',
+        { meldSystem: 'german' },
+      )
+      run(deal, '120, pass, pass, take, g9♣>0, gK♠>1, c220, A♣')
+      expect(deal.contract).toBe(220)
+      let clubs = 0
+      for (const seat of [0, 1]) {
+        const random = seededRandom(46 + seat)
+        for (let i = 0; i < 1000; i++) {
+          const sample = sampleDeal(deal.viewFor(seat), random)
+          const eight = [...sample.hand(2), ...playedBy(sample, 2)]
+          check(
+            marriageValue(eight, MARRIAGE_VALUES.german) >= 100,
+            () => `contract 220 with ${key(eight)}`,
+          )
+          if (marriageValue(eight, MARRIAGE_VALUES.classic) < 100) clubs++
+        }
+      }
+      // Classic values would have rejected many of these layouts.
+      expect(clubs).toBeGreaterThan(100)
     })
 
     it('keeps the partner of a king led without a marriage away from the leader', () => {

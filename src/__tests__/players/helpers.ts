@@ -1,5 +1,5 @@
 import { cards } from '../../engine/Card'
-import { Deal, actionKey, type Action } from '../../engine/Deal'
+import { Deal, actionKey, type Action, type DealOptions } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import type { Player } from '../../engine/Player'
 import { createPlayer } from '../../engine/PlayersSelect'
@@ -10,8 +10,13 @@ import { MCTSPlayer } from '../../engine/players/MCTSPlayer'
 import { RolloutPlayer } from '../../engine/players/RolloutPlayer'
 
 /** A deal with the given hands (seats 0, 1, 2) and musik. */
-export function dealOf(hands: [string, string, string], musik: string, dealer = 0): Deal {
-  return Deal.deal(dealer, cards([...hands, musik].join(' ')))
+export function dealOf(
+  hands: [string, string, string],
+  musik: string,
+  dealer = 0,
+  options: DealOptions = {},
+): Deal {
+  return Deal.deal(dealer, cards([...hands, musik].join(' ')), options)
 }
 
 /** Everybody passes, so the opener plays 100 after giving `gifts` (left first). */

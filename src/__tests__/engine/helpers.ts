@@ -1,5 +1,5 @@
-import { ALL_CARDS, Card, cardIndex, cards } from '../../engine/Card'
-import { Deal, type Action } from '../../engine/Deal'
+import { ALL_CARDS, Card, Color, card, cardIndex, cards } from '../../engine/Card'
+import { Deal, type Action, type DealOptions } from '../../engine/Deal'
 import { Player } from '../../engine/Player'
 import { PlayerType } from '../../engine/PlayerType'
 import { pick, type Random } from '../../engine/random'
@@ -13,9 +13,36 @@ export function dealWith(
   dealer: number,
   hands: [string, string, string],
   musik: string,
+  options: DealOptions = {},
 ): Deal {
   const deck = [...hands.flatMap(hand => cards(hand)), ...cards(musik)]
-  return Deal.deal(dealer, deck)
+  return Deal.deal(dealer, deck, options)
+}
+
+/**
+ * Classic suit → the suit with the same marriage value in the German system
+ * (♥→♣, ♦→♠, ♣→♥, ♠→♦). A German deal of the relabelled cards is the classic
+ * deal with other suit symbols.
+ */
+export const GERMAN_SUIT: Readonly<Record<Color, Color>> = {
+  [Color.Kier]: Color.Trefl,
+  [Color.Karo]: Color.Pik,
+  [Color.Trefl]: Color.Kier,
+  [Color.Pik]: Color.Karo,
+}
+
+/** The card of the German twin deal (same figure, relabelled suit). */
+export function toGerman(value: Card): Card {
+  return card(value.figure, GERMAN_SUIT[value.color])
+}
+
+/** A card mask (bits `cardIndex`) of the German twin deal. */
+export function toGermanMask(mask: number): number {
+  let result = 0
+  for (const value of ALL_CARDS) {
+    if (mask & (1 << cardIndex(value))) result |= 1 << cardIndex(toGerman(value))
+  }
+  return result
 }
 
 export function ids(list: readonly Card[]): string {

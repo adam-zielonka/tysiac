@@ -7,7 +7,16 @@
   import ScoreTable from './ScoreTable.svelte'
   import ActivityPanel from './ActivityPanel.svelte'
   import type { PlayerType } from '../engine/PlayerType'
-  import { PACES } from './ui'
+  import { MELD_SYSTEMS } from '../engine/rules'
+  import { chooseMeldSystem } from '../engine/settings'
+  import {
+    MELD_SYSTEM_NAMES,
+    PACES,
+    meldRulesText,
+    meldSystemPending,
+    meldValuesLabel,
+    meldValuesText,
+  } from './ui'
 
   const { game } = store
   let settingsDialog: HTMLDialogElement
@@ -19,6 +28,10 @@
 
   $: isSetup = $game.status === 'setup'
   $: inProgress = $game.status === 'playing' || $game.status === 'dealEnd'
+  /** Chosen in Settings for the next deals. */
+  $: meldSystem = $game.meldSystem
+  /** The deal in progress keeps its values; the new ones start with the next deal. */
+  $: meldPending = meldSystemPending($game)
 
   async function openPlayerPicker(seat: number): Promise<void> {
     if (game.status !== 'setup') return
@@ -142,6 +155,38 @@
         bind:checked={allCardsVisible}
       /></label
     >
+    <div class="setting-row meld-row">
+      <span id="meld-label">{$tr('Wartości meldunków')}</span>
+      <div
+        class="meld-options"
+        role="group"
+        aria-labelledby="meld-label"
+        aria-describedby="meld-hint"
+      >
+        {#each MELD_SYSTEMS as system}
+          <button
+            type="button"
+            aria-pressed={meldSystem === system}
+            aria-label={`${$tr(MELD_SYSTEM_NAMES[system])}: ${meldValuesLabel(system, $tr)}`}
+            on:click={() => chooseMeldSystem(game, system)}
+          >
+            <span class="meld-name">{$tr(MELD_SYSTEM_NAMES[system])}</span>
+            <span class="meld-values">{meldValuesText(system)}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="setting-notes">
+        <p id="meld-hint">
+          <span aria-hidden="true">{$tr('Żołądź to ♣, wino ♠, serce ♥, dzwonek ♦.')}</span
+          ><span class="visually-hidden"
+            >{$tr('Żołądź to trefl, wino pik, serce kier, dzwonek karo.')}</span
+          >
+        </p>
+        <p class="setting-note" role="status">
+          {#if meldPending}{$tr('Zmiana obowiązuje od następnego rozdania.')}{/if}
+        </p>
+      </div>
+    </div>
     <div class="setting-row language-row">
       <span id="language-label">Language / Język</span>
       <div class="language-switch" role="group" aria-labelledby="language-label">
@@ -228,9 +273,7 @@
       )}
     </p>
     <p>
-      <b>{$tr('06 · Meldunki')}</b>{$tr(
-        'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Kolor meldunku staje się atutem i zastępuje poprzedni.',
-      )}
+      <b>{$tr('06 · Meldunki')}</b>{meldRulesText($game, $tr)}
     </p>
     <p>
       <b>{$tr('07 · Punkty')}</b>{$tr(
@@ -491,6 +534,7 @@
     font-size: 14px;
   }
   .pace-row,
+  .meld-row,
   .language-row {
     flex-direction: column;
     align-items: stretch;
@@ -502,7 +546,13 @@
     display: flex;
     gap: 6px;
   }
+  .meld-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+    gap: 6px;
+  }
   .pace-options button,
+  .meld-options button,
   .language-switch button {
     flex: 1;
     min-width: 0;
@@ -516,6 +566,7 @@
     cursor: pointer;
   }
   .pace-options button[aria-pressed='true'],
+  .meld-options button[aria-pressed='true'],
   .language-switch button[aria-pressed='true'] {
     background: #d1dfb4;
     color: #233629;
@@ -523,8 +574,50 @@
     font-weight: 650;
   }
   .pace-options button:not([aria-pressed='true']):hover,
+  .meld-options button:not([aria-pressed='true']):hover,
   .language-switch button:not([aria-pressed='true']):hover {
     background: #304333;
+  }
+  .meld-options button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    padding: 9px 12px;
+    text-align: left;
+  }
+  .meld-name {
+    font-weight: 600;
+  }
+  .meld-options button[aria-pressed='true'] .meld-name {
+    font-weight: 700;
+  }
+  .meld-values {
+    font-size: 13px;
+    font-weight: 450;
+    color: #9fb29e;
+    font-variant-numeric: tabular-nums;
+  }
+  .meld-options button[aria-pressed='true'] .meld-values {
+    color: #3f5641;
+  }
+  .setting-notes p {
+    margin: 0;
+    color: #9fb29e;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .setting-notes .setting-note {
+    color: #d9be84;
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .reveal {
     cursor: pointer;

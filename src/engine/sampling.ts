@@ -12,10 +12,12 @@ import { Deal } from './Deal'
 import {
   BASE_MAX_BID,
   HAND_SIZE,
-  MARRIAGE_POINTS,
+  MARRIAGE_VALUES,
   MUSIK_SIZE,
   PLAYER_COUNT,
   nextSeat,
+  type MarriageValues,
+  type MeldSystem,
 } from './rules'
 import { randomInt, shuffle, type Random } from './random'
 
@@ -26,17 +28,23 @@ const ALL_MASK = (1 << ALL_CARDS.length) - 1
 const SORTED = Card.sortHand([...ALL_CARDS])
 const SORTED_BITS = SORTED.map(card => 1 << cardIndex(card))
 const NO_BANS: readonly number[] = [0, 0, 0, 0]
-/** King and queen of each suit with the marriage value. */
-const MARRIAGES = COLORS.map(color => ({
-  pair: bit(card(Figure.K, color)) | bit(card(Figure.Q, color)),
-  points: MARRIAGE_POINTS[color],
-}))
+/** King and queen of each suit with the marriage value, per meld system. */
+const MARRIAGES: Readonly<Record<MeldSystem, readonly Marriage[]>> = {
+  classic: marriagesWorth(MARRIAGE_VALUES.classic),
+  german: marriagesWorth(MARRIAGE_VALUES.german),
+}
 /**
  * Draws checked against the auction before falling back to the first one.
  * A view constrained by the auction needs about four draws on average (one in
  * a hundred needs more than fifty), so the fallback is practically never used.
  */
 const AUCTION_TRIES = 1000
+
+interface Marriage {
+  /** Mask of the king and the queen. */
+  pair: number
+  points: number
+}
 
 interface Choice {
   /** The card the other defender got from the declarer, when it is a musik card. */
@@ -68,7 +76,8 @@ interface AuctionNeed {
  *
  * The auction is public evidence too: bids and contracts above 120 need
  * marriages. A seat whose highest bid `b` (`s.maxBids`) exceeds 120 held
- * marriages worth at least `b − 120` among its seven dealt cards (its hand
+ * marriages worth at least `b − 120` (in the values of the deal's meld
+ * system) among its seven dealt cards (its hand
  * and played cards, without the gift it got; for the declarer with its gifts
  * and without the musik), and a contract raised above the winning bid needs
  * `contract − 120` in the declarer's eight cards after giving. Deals that
@@ -228,6 +237,7 @@ export function sampleDeal(view: Deal, random: Random = Math.random): Deal {
   ) {
     needs.push({ seat: declarer, value: s.contract - BASE_MAX_BID, contract: true })
   }
+  const marriages = MARRIAGES[s.meldSystem]
   const musikMask = maskOf(s.musikCards)
   let knownGifts = 0
   for (const gift of s.gifts) knownGifts |= bit(gift.card)
@@ -250,7 +260,7 @@ export function sampleDeal(view: Deal, random: Random = Math.random): Deal {
         }
       }
       let value = 0
-      for (const marriage of MARRIAGES) {
+      for (const marriage of marriages) {
         if ((held & marriage.pair) === marriage.pair) value += marriage.points
       }
       if (value < need.value) return false
@@ -392,6 +402,13 @@ export function sampleDeal(view: Deal, random: Random = Math.random): Deal {
   d.viewer = null
   d.hiddenCounts = null
   return deal
+}
+
+function marriagesWorth(values: MarriageValues): Marriage[] {
+  return COLORS.map(color => ({
+    pair: bit(card(Figure.K, color)) | bit(card(Figure.Q, color)),
+    points: values[color],
+  }))
 }
 
 function bit(card: Card): number {

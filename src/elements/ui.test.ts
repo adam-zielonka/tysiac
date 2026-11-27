@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { Color, cards } from '../engine/Card'
 import { Deal } from '../engine/Deal'
-import type { DealRecord, HistoryEntry } from '../engine/Game'
+import type { DealRecord, HistoryEntry, MatchStatus } from '../engine/Game'
 import { PlayerType } from '../engine/PlayerType'
+import type { MeldSystem } from '../engine/rules'
+import { setLanguage, t as translate } from '../i18n'
 import {
+  MELD_SYSTEM_NAMES,
   activityText,
   bidText,
   contractHint,
@@ -12,7 +15,12 @@ import {
   formatNumber,
   joinNames,
   matchEnd,
+  meldRulesText,
+  meldSystemInPlay,
+  meldSystemPending,
   meldValue,
+  meldValuesLabel,
+  meldValuesText,
   nearestOption,
   playHint,
   playRule,
@@ -20,6 +28,7 @@ import {
   seatSide,
   signed,
   stepOption,
+  suitName,
   type Translate,
 } from './ui'
 
@@ -34,8 +43,8 @@ const name = (seat: number) => names[seat]
  * Deck order: seat 0 gets cards 0–6, seat 1 cards 7–13, seat 2 cards 14–20,
  * musik 21–23. Dealer 2 makes seat 0 the opener.
  */
-function dealFor(hands: string[], musik: string): Deal {
-  return Deal.deal(2, cards(`${hands.join(' ')} ${musik}`))
+function dealFor(hands: string[], musik: string, meldSystem?: MeldSystem): Deal {
+  return Deal.deal(2, cards(`${hands.join(' ')} ${musik}`), { meldSystem })
 }
 
 /** Seat 0 wins the auction at 100, takes the musik and gives two cards away. */
@@ -363,6 +372,14 @@ describe('play hints and marriages', () => {
     expect(playHint(deal, t)).toBe('Dołóż do koloru ♥ i przebij K♥')
   })
 
+  it('shows the marriage bonus in the values of the deal', () => {
+    const deal = toPlay(dealFor(hands, musik, 'german'), ['J♠', '10♠'])
+    expect(meldValue(deal, cards('K♥')[0])).toBe(60)
+    expect(meldValue(deal, cards('Q♠')[0])).toBe(80)
+    play(deal, 'K♥')
+    expect(deal.meldPointsOf(0)).toBe(60)
+  })
+
   it('asks for a winning trump when out of the led suit', () => {
     const deal = start()
     for (const id of ['K♥', 'J♥', '10♥']) play(deal, id)
@@ -373,6 +390,124 @@ describe('play hints and marriages', () => {
     expect(playHint(deal, t)).toBe('Przebij atutem ♥ · nie masz koloru ♦')
     play(deal, 'Q♥')
     expect(playHint(deal, t)).toBe('Dołóż do koloru ♦ · lewa jest już przebita atutem')
+  })
+})
+
+describe('marriage values', () => {
+  /** English test translator for the suit names. */
+  const english: Translate = source =>
+    ({ kier: 'hearts', karo: 'diamonds', trefl: 'clubs', pik: 'spades' })[source] ??
+    source
+
+  const hands = [
+    'A♥ K♥ Q♥ 10♣ J♣ 9♠ K♠',
+    'A♣ K♣ Q♣ J♥ 9♣ 10♦ A♠',
+    'A♦ K♦ Q♦ J♦ 10♥ 9♥ 9♦',
+  ]
+
+  it('lists the values of each system, the most valuable first', () => {
+    // Each symbol stays with its value on a no-break space.
+    const text = (system: MeldSystem, separator?: string) =>
+      meldValuesText(system, separator).replaceAll('\u00a0', '_')
+    expect(text('classic')).toBe('♥_100 · ♦_80 · ♣_60 · ♠_40')
+    expect(text('german')).toBe('♣_100 · ♠_80 · ♥_60 · ♦_40')
+    expect(text('german', ', ')).toBe('♣_100, ♠_80, ♥_60, ♦_40')
+  })
+
+  it('names the suits for screen readers', () => {
+    expect(suitName(Color.Kier, t)).toBe('kier')
+    expect(suitName(Color.Pik, english)).toBe('spades')
+    expect(meldValuesLabel('classic', t)).toBe('kier 100, karo 80, trefl 60, pik 40')
+    expect(meldValuesLabel('german', t)).toBe('trefl 100, pik 80, kier 60, karo 40')
+    expect(meldValuesLabel('german', english)).toBe(
+      'clubs 100, spades 80, hearts 60, diamonds 40',
+    )
+  })
+
+  it('names both systems after their suits in value order', () => {
+    expect(MELD_SYSTEM_NAMES).toEqual({
+      classic: 'Kier, karo, trefl, pik',
+      german: 'Żołądź, wino, serce, dzwonek',
+    })
+  })
+
+  it('tells when a new system waits for the next deal', () => {
+    const deal = dealFor(hands, 'Q♠ J♠ 10♠', 'german')
+    const pending = (
+      status: MatchStatus,
+      meldSystem: MeldSystem,
+      current: Deal | null = deal,
+    ) => meldSystemPending({ status, meldSystem, deal: current })
+    expect(pending('playing', 'german')).toBe(false)
+    expect(pending('playing', 'classic')).toBe(true)
+    expect(pending('dealEnd', 'classic')).toBe(true)
+    // No deal in progress: the choice applies to the first deal.
+    expect(pending('setup', 'classic', null)).toBe(false)
+    expect(pending('gameOver', 'classic')).toBe(false)
+  })
+
+  it('keeps the values of the deal in progress until the next deal', () => {
+    const deal = dealFor(hands, 'Q♠ J♠ 10♠', 'german')
+    const inPlay = (
+      status: MatchStatus,
+      meldSystem: MeldSystem,
+      current: Deal | null = deal,
+    ) => meldSystemInPlay({ status, meldSystem, deal: current })
+    expect(inPlay('playing', 'classic')).toBe('german')
+    expect(inPlay('dealEnd', 'classic')).toBe('german')
+    expect(inPlay('playing', 'german')).toBe('german')
+    expect(inPlay('setup', 'classic', null)).toBe('classic')
+    expect(inPlay('gameOver', 'classic')).toBe('classic')
+  })
+
+  describe('rule 06 on marriages', () => {
+    const classicDeal = dealFor(hands, 'Q♠ J♠ 10♠')
+    const germanDeal = dealFor(hands, 'Q♠ J♠ 10♠', 'german')
+    const rule = (
+      status: MatchStatus,
+      meldSystem: MeldSystem,
+      current: Deal | null,
+      translate: Translate = t,
+    ) =>
+      meldRulesText({ status, meldSystem, deal: current }, translate).replaceAll(' ', ' ')
+    const lead =
+      'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam:'
+    const trump = 'Kolor meldunku staje się atutem i zastępuje poprzedni.'
+    const suits = 'Żołądź to ♣, wino ♠, serce ♥, dzwonek ♦.'
+    const classicValues = '♥ 100, ♦ 80, ♣ 60, ♠ 40'
+    const germanValues = '♣ 100, ♠ 80, ♥ 60, ♦ 40'
+
+    it('gives the chosen values and offers the other system', () => {
+      expect(rule('setup', 'classic', null)).toBe(
+        `${lead} ${classicValues}. ${trump} To wartości „Kier, karo, trefl, pik”; w Ustawieniach możesz wybrać „Żołądź, wino, serce, dzwonek”: ${germanValues}. ${suits}`,
+      )
+      expect(rule('playing', 'german', germanDeal)).toBe(
+        `${lead} ${germanValues}. ${trump} To wartości „Żołądź, wino, serce, dzwonek”; w Ustawieniach możesz wybrać „Kier, karo, trefl, pik”: ${classicValues}. ${suits}`,
+      )
+    })
+
+    it('gives the values of the deal in progress while a new choice waits', () => {
+      // A classic deal is under way; German values were chosen for the next one.
+      expect(rule('playing', 'german', classicDeal)).toBe(
+        `${lead} ${classicValues}. ${trump} W tym rozdaniu obowiązują wartości „Kier, karo, trefl, pik”. Od następnego rozdania: „Żołądź, wino, serce, dzwonek” — ${germanValues}. ${suits}`,
+      )
+      expect(rule('dealEnd', 'classic', germanDeal)).toContain(`sam: ${germanValues}.`)
+      // The match is over: the next match starts with the chosen values.
+      expect(rule('gameOver', 'german', classicDeal)).toContain(`sam: ${germanValues}.`)
+    })
+
+    it('translates the waiting choice', () => {
+      setLanguage('en')
+      try {
+        const text = rule('playing', 'german', classicDeal, translate)
+        expect(text).toContain(`declared automatically: ${classicValues}.`)
+        expect(text).toContain(
+          `This deal keeps the “Hearts, diamonds, clubs, spades” values. From the next deal: “Acorns, leaves, hearts, bells” — ${germanValues}.`,
+        )
+      } finally {
+        setLanguage('pl')
+      }
+    })
   })
 })
 

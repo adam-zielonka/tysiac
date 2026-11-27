@@ -6,7 +6,6 @@ import {
   JACK,
   KING,
   MARRIAGE_MASK,
-  MELD_VALUE,
   ORDER_OF,
   POINTS_OF,
   QUEEN,
@@ -15,12 +14,14 @@ import {
   SUIT_OF,
   TEN,
   beatsIndex,
+  bestMarriageSuit,
   bitCount,
   cardAt,
   hasMarriage,
   highestBit,
   lowestBit,
   maskOf,
+  meldValuesOf,
   strongerInSuit,
 } from './bits'
 import type { PlayState } from './PlayState'
@@ -168,7 +169,7 @@ function lead(t: Seat): number {
     // A marriage counts from any lead, the first one too. Without a trump
     // every top card keeps the lead: cash them before declaring.
     if (trump < 0 && sure) return cash(t, sure)
-    const suit = SUIT_OF[lowestBit(kept)]
+    const suit = bestMarriageSuit(hand, st.meldValues)
     const king = suit * 6 + KING
     return isTop(king, threat) ? king : suit * 6 + QUEEN
   }
@@ -328,10 +329,12 @@ export function greedyCard(st: PlayState): number {
   const kept = marriageCards(hand)
   const trump = st.trump
   if (!st.trick.length) {
-    if (kept) return SUIT_OF[lowestBit(kept)] * 6 + KING
+    if (kept) return bestMarriageSuit(hand, st.meldValues) * 6 + KING
+    // Equal cards: the suit with the more valuable marriage first.
     return best(hand & ~kept || hand, card => {
       const strength = (5 - ORDER_OF[card]) * 100
-      return strength + (SUIT_OF[card] === trump ? 50 : 0) - SUIT_OF[card]
+      const suit = SUIT_OF[card]
+      return strength + (suit === trump ? 50 : 0) + st.meldValues[suit] / 1000
     })
   }
   const trick = st.trick
@@ -355,8 +358,16 @@ export function greedyCard(st: PlayState): number {
 
 // -------------------------------------------------------------------- gifts
 
-/** How much the declarer wants to keep a card of a 10-card hand. */
-export function keepValue(hand: number, card: number, trumpSuit: number): number {
+/**
+ * How much the declarer wants to keep a card of a 10-card hand (`values`:
+ * marriage values per suit index).
+ */
+export function keepValue(
+  hand: number,
+  card: number,
+  trumpSuit: number,
+  values: readonly number[],
+): number {
   const suit = SUIT_OF[card]
   const order = ORDER_OF[card]
   const inSuit = hand & SUIT_MASK[suit]
@@ -367,7 +378,7 @@ export function keepValue(hand: number, card: number, trumpSuit: number): number
     value = inSuit & (1 << (suit * 6)) ? 80 : 30 + (length >= 3 ? 8 : 0)
   else if (order === KING || order === QUEEN) {
     // A lone king or queen could complete a defender's marriage.
-    value = hasMarriage(hand, suit) ? 95 : 30 + MELD_VALUE[suit] / 4
+    value = hasMarriage(hand, suit) ? 95 : 30 + values[suit] / 4
   } else value = order === JACK ? 10 : 6
   if (suit === trumpSuit) value += 20
   if (length >= 4) value += 4
@@ -375,28 +386,37 @@ export function keepValue(hand: number, card: number, trumpSuit: number): number
   return value
 }
 
-/** Suit of the most valuable marriage, or -1. */
-export function bestMarriageSuit(hand: number): number {
-  for (let suit = 0; suit < SUITS; suit++) if (hasMarriage(hand, suit)) return suit
-  return -1
-}
-
-/** Cards of the hand from the least to the most useful. */
-export function giftOrder(hand: number): number[] {
-  const trumpSuit = bestMarriageSuit(hand)
+/**
+ * Cards of the hand from the least to the most useful. Equal values go by
+ * suit, the less valuable marriage first, then from the weaker card (the
+ * reverse deck order for classic values), so German values give exactly the
+ * relabelled classic order.
+ */
+export function giftOrder(hand: number, values: readonly number[]): number[] {
+  const trumpSuit = bestMarriageSuit(hand, values)
   const cards: number[] = []
   for (let bits = hand; bits; bits &= bits - 1) cards.push(lowestBit(bits))
-  const value = cards.map(card => keepValue(hand, card, trumpSuit))
   return cards
-    .map((card, i) => ({ card, value: value[i] }))
-    .sort((a, b) => a.value - b.value || b.card - a.card)
+    .map(card => ({
+      card,
+      value: keepValue(hand, card, trumpSuit, values),
+      tie: suitRank(SUIT_OF[card], values) * 6 + ORDER_OF[card],
+    }))
+    .sort((a, b) => a.value - b.value || b.tie - a.tie)
     .map(entry => entry.card)
+}
+
+/** Position of a suit by marriage value: 0 for the most valuable. */
+function suitRank(suit: number, values: readonly number[]): number {
+  let rank = 0
+  for (let other = 0; other < SUITS; other++) if (values[other] > values[suit]) rank++
+  return rank
 }
 
 /** Heuristic gift: the least useful card goes to the first waiting defender. */
 export function heuristicGift(deal: Deal, actions: Action[]): Action {
   const hand = maskOf(deal.hand(deal.turn))
-  const card = cardAt(giftOrder(hand)[0])
+  const card = cardAt(giftOrder(hand, meldValuesOf(deal))[0])
   const to = deal.pendingRecipients()[0]
   return (
     actions.find(a => a.type === 'give' && a.card === card && a.to === to) ?? actions[0]
@@ -408,15 +428,18 @@ export function heuristicGift(deal: Deal, actions: Action[]): Action {
 /**
  * Features of the declarer's final eight cards. Weights below come from a
  * least-squares fit to 40 000 simulated deals played out with `tacticalCard`.
+ * The most valuable marriage is the trump (`values` per suit index), so a
+ * german deal gets the features of its relabelled classic twin.
  */
-function features(hand: number): number[] {
+function features(hand: number, values: readonly number[]): number[] {
   let aces = 0
   let tensWithAce = 0
   let bareTens = 0
   let loneKings = 0
   let loneQueens = 0
   let low = 0
-  const marriages: number[] = []
+  let trumpSuit = -1
+  let marriageSum = 0
   for (let suit = 0; suit < SUITS; suit++) {
     const inSuit = hand & SUIT_MASK[suit]
     const base = suit * 6
@@ -428,15 +451,16 @@ function features(hand: number): number[] {
     }
     const king = inSuit & (1 << (base + KING))
     const queen = inSuit & (1 << (base + QUEEN))
-    if (king && queen) marriages.push(suit)
-    else if (king) loneKings++
+    if (king && queen) {
+      marriageSum += values[suit]
+      if (trumpSuit < 0 || values[suit] > values[trumpSuit]) trumpSuit = suit
+    } else if (king) loneKings++
     else if (queen) loneQueens++
     if (inSuit & (1 << (base + JACK))) low++
     if (inSuit & (1 << (base + 5))) low++
   }
-  const trumpSuit = marriages.length ? marriages[0] : -1
-  const first = marriages.length ? MELD_VALUE[marriages[0]] : 0
-  const rest = marriages.slice(1).reduce((sum, suit) => sum + MELD_VALUE[suit], 0)
+  const first = trumpSuit >= 0 ? values[trumpSuit] : 0
+  const rest = marriageSum - first
   let trumpLength = 0
   let trumpTops = 0
   let voids = 0
@@ -474,10 +498,10 @@ const WEIGHTS = [
 ]
 
 /** Expected points (cards and marriages) of a declarer keeping these eight cards. */
-export function declarerEstimate(hand: number): number {
-  const values = features(hand)
+export function declarerEstimate(hand: number, values: readonly number[]): number {
+  const terms = features(hand, values)
   let sum = 0
-  for (let i = 0; i < values.length; i++) sum += values[i] * WEIGHTS[i]
+  for (let i = 0; i < terms.length; i++) sum += terms[i] * WEIGHTS[i]
   return sum
 }
 
@@ -485,8 +509,8 @@ export function declarerEstimate(hand: number): number {
 export const estimateFeatures = features
 
 /** The eight cards kept after giving away the two least useful ones. */
-export function keptAfterGifts(hand10: number): number {
-  const order = giftOrder(hand10)
+export function keptAfterGifts(hand10: number, values: readonly number[]): number {
+  const order = giftOrder(hand10, values)
   return hand10 & ~(1 << order[0]) & ~(1 << order[1])
 }
 
@@ -495,7 +519,7 @@ export function keptAfterGifts(hand10: number): number {
  * estimate over every possible musik (680 combinations of the 17 unseen
  * cards), each time keeping the best eight cards.
  */
-export function auctionEstimate(hand: number): number {
+export function auctionEstimate(hand: number, values: readonly number[]): number {
   const unseen: number[] = []
   for (let bits = FULL_MASK & ~hand; bits; bits &= bits - 1) unseen.push(lowestBit(bits))
   let total = 0
@@ -504,7 +528,7 @@ export function auctionEstimate(hand: number): number {
     for (let b = a + 1; b < unseen.length; b++) {
       for (let c = b + 1; c < unseen.length; c++) {
         const full = hand | (1 << unseen[a]) | (1 << unseen[b]) | (1 << unseen[c])
-        total += declarerEstimate(keptAfterGifts(full))
+        total += declarerEstimate(keptAfterGifts(full, values), values)
         count++
       }
     }

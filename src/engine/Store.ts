@@ -1,10 +1,12 @@
 import { Game } from './Game'
+import { loadMeldSystem } from './settings'
 
 class Store {
   game: Game
 
   constructor() {
-    this.game = new Game()
+    // The match rules chosen in Settings: marriage values from the last visit.
+    this.game = new Game({ meldSystem: loadMeldSystem() })
   }
 }
 

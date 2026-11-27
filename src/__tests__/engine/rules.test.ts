@@ -4,9 +4,11 @@ import { seededRandom } from '../../engine/random'
 import {
   BASE_MAX_BID,
   BID_STEP,
+  DEFAULT_MELD_SYSTEM,
   HAND_SIZE,
   LOCK_SCORE,
-  MARRIAGE_POINTS,
+  MARRIAGE_VALUES,
+  MELD_SYSTEMS,
   MUSIK_SIZE,
   OPENING_BID,
   PLAYER_COUNT,
@@ -19,17 +21,21 @@ import {
   excludedByPlay,
   hasCard,
   isMeldLead,
+  isMeldSystem,
   legalPlays,
   marriageValue,
   marriagesIn,
   maxBidFor,
   nextSeat,
   roundScore,
+  suitsByValue,
   trickWinnerIndex,
 } from '../../engine/rules'
 import { ids, maskIds } from './helpers'
 
 const [AH, TEN_H, KH, QH, JH, NINE_H] = cards('A♥ 10♥ K♥ Q♥ J♥ 9♥')
+const CLASSIC = MARRIAGE_VALUES.classic
+const GERMAN = MARRIAGE_VALUES.german
 
 describe('rules', () => {
   it('has the constants of this version', () => {
@@ -39,12 +45,38 @@ describe('rules', () => {
     expect([OPENING_BID, BID_STEP, BASE_MAX_BID, TARGET_SCORE, LOCK_SCORE]).toEqual([
       100, 10, 120, 1000, 800,
     ])
-    expect(MARRIAGE_POINTS).toEqual({
+    expect(CLASSIC).toEqual({
       [Color.Kier]: 100,
       [Color.Karo]: 80,
       [Color.Trefl]: 60,
       [Color.Pik]: 40,
     })
+  })
+
+  it('values marriages classically or after the German-suited deck', () => {
+    expect(MELD_SYSTEMS).toEqual(['classic', 'german'])
+    expect(DEFAULT_MELD_SYSTEM).toBe('classic')
+    // Żołądź (♣) 100, wino (♠) 80, serce (♥) 60, dzwonek (♦) 40.
+    expect(GERMAN).toEqual({
+      [Color.Trefl]: 100,
+      [Color.Pik]: 80,
+      [Color.Kier]: 60,
+      [Color.Karo]: 40,
+    })
+    expect(suitsByValue(CLASSIC).map(Card.colorToString)).toEqual(['♥', '♦', '♣', '♠'])
+    expect(suitsByValue(GERMAN).map(Card.colorToString)).toEqual(['♣', '♠', '♥', '♦'])
+    // Both systems use the same four values, so the relabelled games are equal.
+    for (const values of [CLASSIC, GERMAN]) {
+      expect(COLORS.map(color => values[color]).sort((a, b) => b - a)).toEqual([
+        100, 80, 60, 40,
+      ])
+    }
+    expect(Object.isFrozen(MARRIAGE_VALUES)).toBe(true)
+    expect(Object.isFrozen(GERMAN)).toBe(true)
+    expect(MELD_SYSTEMS.every(isMeldSystem)).toBe(true)
+    for (const value of ['', 'German', 'french', null, undefined, 100, {}]) {
+      expect(isMeldSystem(value)).toBe(false)
+    }
   })
 
   it('moves clockwise around three seats', () => {
@@ -89,23 +121,47 @@ describe('rules', () => {
     expect(hasCard(cards('K♥ Q♥'), KH)).toBe(true)
     expect(hasCard(cards('K♥ Q♥'), AH)).toBe(false)
     expect(hasCard(cards('K♥ Q♥'), new Card(KH.figure, KH.color))).toBe(true)
-    expect(marriagesIn(cards('K♥ A♠ Q♥ K♠ J♠ Q♦'))).toEqual([Color.Kier])
-    expect(marriagesIn(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'))).toEqual([
+    expect(marriagesIn(cards('K♥ A♠ Q♥ K♠ J♠ Q♦'), CLASSIC)).toEqual([Color.Kier])
+    expect(marriagesIn(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'), CLASSIC)).toEqual([
       Color.Kier,
       Color.Karo,
       Color.Trefl,
       Color.Pik,
     ])
-    expect(marriageValue(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'))).toBe(280)
-    expect(marriageValue(cards('K♥ K♦ K♣ K♠ Q♥'))).toBe(100)
-    expect(marriageValue([])).toBe(0)
+    expect(marriageValue(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'), CLASSIC)).toBe(280)
+    expect(marriageValue(cards('K♥ K♦ K♣ K♠ Q♥'), CLASSIC)).toBe(100)
+    expect(marriageValue([], CLASSIC)).toBe(0)
+  })
+
+  it('finds marriages in German values, the most valuable first', () => {
+    expect(marriagesIn(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'), GERMAN)).toEqual([
+      Color.Trefl,
+      Color.Pik,
+      Color.Kier,
+      Color.Karo,
+    ])
+    expect(marriagesIn(cards('K♦ Q♦ K♥ Q♥ 9♣'), GERMAN)).toEqual([Color.Kier, Color.Karo])
+    expect(marriageValue(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'), GERMAN)).toBe(280)
+    expect(marriageValue(cards('K♣ Q♣ A♥'), GERMAN)).toBe(100)
+    expect(marriageValue(cards('K♦ Q♦ A♥'), GERMAN)).toBe(40)
+    expect(marriageValue(cards('K♥ Q♥ K♦ Q♦'), GERMAN)).toBe(100)
   })
 
   it('limits bids to 120 plus the marriages held', () => {
-    expect(maxBidFor(cards('A♥ 10♥ A♦ 10♦ A♣ 10♣ A♠'))).toBe(120)
-    expect(maxBidFor(cards('K♠ Q♠ A♥ 9♥ 9♦ 9♣ 9♠'))).toBe(160)
-    expect(maxBidFor(cards('K♥ Q♥ K♦ Q♦ A♠ 9♦ 9♣'))).toBe(300)
-    expect(maxBidFor(cards('K♥ Q♥ K♦ Q♦ K♣ Q♣ K♠ Q♠'))).toBe(400)
+    expect(maxBidFor(cards('A♥ 10♥ A♦ 10♦ A♣ 10♣ A♠'), CLASSIC)).toBe(120)
+    expect(maxBidFor(cards('K♠ Q♠ A♥ 9♥ 9♦ 9♣ 9♠'), CLASSIC)).toBe(160)
+    expect(maxBidFor(cards('K♥ Q♥ K♦ Q♦ A♠ 9♦ 9♣'), CLASSIC)).toBe(300)
+    expect(maxBidFor(cards('K♥ Q♥ K♦ Q♦ K♣ Q♣ K♠ Q♠'), CLASSIC)).toBe(400)
+  })
+
+  it('limits bids by the German values in a German deal', () => {
+    expect(maxBidFor(cards('A♥ 10♥ A♦ 10♦ A♣ 10♣ A♠'), GERMAN)).toBe(120)
+    expect(maxBidFor(cards('K♠ Q♠ A♥ 9♥ 9♦ 9♣ 9♠'), GERMAN)).toBe(200)
+    expect(maxBidFor(cards('K♣ Q♣ A♥ 9♥ 9♦ 9♠ J♠'), GERMAN)).toBe(220)
+    expect(maxBidFor(cards('K♥ Q♥ A♥ 9♥ 9♦ 9♣ 9♠'), GERMAN)).toBe(180)
+    expect(maxBidFor(cards('K♦ Q♦ A♥ 9♥ 9♣ 9♠ J♠'), GERMAN)).toBe(160)
+    expect(maxBidFor(cards('K♥ Q♥ K♦ Q♦ A♠ 9♦ 9♣'), GERMAN)).toBe(220)
+    expect(maxBidFor(cards('K♥ Q♥ K♦ Q♦ K♣ Q♣ K♠ Q♠'), GERMAN)).toBe(400)
   })
 
   it('builds bid ranges in steps of ten', () => {

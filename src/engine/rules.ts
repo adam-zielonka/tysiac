@@ -13,11 +13,46 @@ export const TARGET_SCORE = 1000
 export const LOCK_SCORE = 800
 export const TOTAL_CARD_POINTS = 120
 
-export const MARRIAGE_POINTS: Record<Color, number> = {
-  [Color.Kier]: 100,
-  [Color.Karo]: 80,
-  [Color.Trefl]: 60,
-  [Color.Pik]: 40,
+/**
+ * Marriage value systems. `classic` names the French suits: ♥ kier 100,
+ * ♦ karo 80, ♣ trefl 60, ♠ pik 40. `german` follows the German-suited Polish
+ * deck: żołądź (♣) 100, wino (♠) 80, serce (♥) 60, dzwonek (♦) 40; the cards
+ * keep their French symbols. Every other rule treats the suits alike, so a
+ * `german` deal is a `classic` one with the suits relabelled (♥→♣, ♦→♠,
+ * ♣→♥, ♠→♦). A deal keeps its system from the deal to the scoring.
+ */
+export type MeldSystem = 'classic' | 'german'
+
+export const MELD_SYSTEMS: readonly MeldSystem[] = ['classic', 'german']
+
+export const DEFAULT_MELD_SYSTEM: MeldSystem = 'classic'
+
+/** Value of a marriage in each suit. */
+export type MarriageValues = Readonly<Record<Color, number>>
+
+export const MARRIAGE_VALUES: Readonly<Record<MeldSystem, MarriageValues>> =
+  Object.freeze({
+    classic: Object.freeze({
+      [Color.Kier]: 100,
+      [Color.Karo]: 80,
+      [Color.Trefl]: 60,
+      [Color.Pik]: 40,
+    }),
+    german: Object.freeze({
+      [Color.Trefl]: 100,
+      [Color.Pik]: 80,
+      [Color.Kier]: 60,
+      [Color.Karo]: 40,
+    }),
+  })
+
+export function isMeldSystem(value: unknown): value is MeldSystem {
+  return MELD_SYSTEMS.includes(value as MeldSystem)
+}
+
+/** Suits from the most to the least valuable marriage. */
+export function suitsByValue(values: MarriageValues): Color[] {
+  return [...COLORS].sort((a, b) => values[b] - values[a])
 }
 
 export function nextSeat(seat: number, step = 1): number {
@@ -40,25 +75,29 @@ export function hasCard(hand: readonly Card[], card: Card): boolean {
   )
 }
 
-/** Suits in which the hand holds both the king and the queen. */
-export function marriagesIn(hand: readonly Card[]): Color[] {
-  return COLORS.filter(
+/**
+ * Suits in which the hand holds both the king and the queen, the most
+ * valuable marriage first.
+ */
+export function marriagesIn(hand: readonly Card[], values: MarriageValues): Color[] {
+  return suitsByValue(values).filter(
     color =>
       hand.some(c => c.color === color && c.figure === Figure.K) &&
       hand.some(c => c.color === color && c.figure === Figure.Q),
   )
 }
 
-export function marriageValue(hand: readonly Card[]): number {
-  return marriagesIn(hand).reduce((sum, color) => sum + MARRIAGE_POINTS[color], 0)
+/** Total value of the marriages held. */
+export function marriageValue(hand: readonly Card[], values: MarriageValues): number {
+  return marriagesIn(hand, values).reduce((sum, color) => sum + values[color], 0)
 }
 
 /**
  * Declarations above 120 require a marriage; the limit is 120 plus the value
  * of all marriages currently held.
  */
-export function maxBidFor(hand: readonly Card[]): number {
-  return BASE_MAX_BID + marriageValue(hand)
+export function maxBidFor(hand: readonly Card[], values: MarriageValues): number {
+  return BASE_MAX_BID + marriageValue(hand, values)
 }
 
 /** All bid values from `from` to `to`, inclusive, in steps of ten. */

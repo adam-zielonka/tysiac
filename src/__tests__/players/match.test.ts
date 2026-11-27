@@ -10,7 +10,7 @@ import {
   onlyDefeatCounts,
   safeContractLimit,
 } from '../../engine/players/match'
-import { maskOf } from '../../engine/players/bits'
+import { MELD_VALUES, maskOf } from '../../engine/players/bits'
 import { auctionEstimate } from '../../engine/players/heuristics'
 import { bestContract, contractValue } from '../../engine/players/montecarlo'
 import { TACTICAL_MARGIN } from '../../engine/players/TacticalPlayer'
@@ -89,7 +89,7 @@ describe('match awareness', () => {
     for (const [a, b, c, musik] of hands) {
       // Dealer 2: seat 0 opens at 100, seat 1 decides on 110 first.
       const deal = dealOf([a, b, c], musik, 2)
-      const estimate = auctionEstimate(maskOf(deal.hand(1)))
+      const estimate = auctionEstimate(maskOf(deal.hand(1)), MELD_VALUES.classic)
       const choice = (scores: number[]) => {
         const tosia = bot(PlayerType.Tactical, 1)
         tosia.matchScores = scores

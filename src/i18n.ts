@@ -24,6 +24,19 @@ const uiTranslations: Record<string, string> = {
   Normalne: 'Normal',
   Szybkie: 'Fast',
   'Pokaż karty rywali': 'Show opponents’ cards',
+  'Wartości meldunków': 'Marriage values',
+  'Kier, karo, trefl, pik': 'Hearts, diamonds, clubs, spades',
+  'Żołądź, wino, serce, dzwonek': 'Acorns, leaves, hearts, bells',
+  'Żołądź to ♣, wino ♠, serce ♥, dzwonek ♦.':
+    'Acorns are ♣, leaves ♠, hearts ♥ and bells ♦.',
+  'Żołądź to trefl, wino pik, serce kier, dzwonek karo.':
+    'Acorns are clubs, leaves are spades, hearts stay hearts and bells are diamonds.',
+  'Zmiana obowiązuje od następnego rozdania.': 'The change applies from the next deal.',
+  // Suit names for screen readers
+  kier: 'hearts',
+  karo: 'diamonds',
+  trefl: 'clubs',
+  pik: 'spades',
   'Zacząć nową partię?': 'Start a new match?',
   'Bieżąca partia i jej wyniki zostaną porzucone. Wrócisz do wyboru graczy.':
     'The current match and its scores will be discarded. You will return to choosing players.',
@@ -263,8 +276,12 @@ const uiTranslations: Record<string, string> = {
   'Trzeba dołożyć do koloru wyjścia i przebić kartę, która na razie bierze lewę, jeśli masz wyższą. Gdy lewa jest już przebita atutem, wystarczy dowolna karta koloru. Bez koloru trzeba przebić atutem: dowolnym, gdy w lewie nie ma atutu, a wyższym, gdy już jest. Jeśli atutem nie wygrasz lewy, dajesz dowolną kartę — nikt nie musi dokładać niższego atutu.':
     'You must follow the suit led and beat the card currently winning the trick if you hold a higher one. Once the trick is trumped, any card of the suit will do. Without the suit you must win with a trump: any trump when none is in the trick, a higher one when there is. If no trump of yours can win the trick, play any card — nobody is forced to under-trump.',
   '06 · Meldunki': '06 · Marriages',
-  'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Kolor meldunku staje się atutem i zastępuje poprzedni.':
-    'When you lead a king or queen to any trick — the first one included — while holding the other card of the pair, the marriage is declared automatically: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Its suit becomes trump and replaces the previous one.',
+  'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam: {values}. Kolor meldunku staje się atutem i zastępuje poprzedni.':
+    'When you lead a king or queen to any trick — the first one included — while holding the other card of the pair, the marriage is declared automatically: {values}. Its suit becomes trump and replaces the previous one.',
+  'To wartości „{name}”; w Ustawieniach możesz wybrać „{other}”: {values}.':
+    'These are the “{name}” values; in Settings you can choose “{other}” instead: {values}.',
+  'W tym rozdaniu obowiązują wartości „{name}”. Od następnego rozdania: „{next}” — {values}.':
+    'This deal keeps the “{name}” values. From the next deal: “{next}” — {values}.',
   '07 · Punkty': '07 · Points',
   'Karty: A 11, 10 10, K 4, Q 3, J 2, 9 0 — razem 120. Rozgrywający dostaje +kontrakt, gdy karty i meldunki dadzą co najmniej tyle, inaczej −kontrakt. Obrońcy zapisują swoje punkty zaokrąglone do 10.':
     'Cards: A 11, 10 10, K 4, Q 3, J 2, 9 0 — 120 in total. The declarer scores +contract when cards and marriages reach at least that much, otherwise −contract. Defenders score their own points rounded to the nearest 10.',

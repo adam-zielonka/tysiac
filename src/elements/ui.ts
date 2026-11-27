@@ -1,13 +1,16 @@
-import { Card, type Color } from '../engine/Card'
+import { Card, Color } from '../engine/Card'
 import type { Bid, Deal } from '../engine/Deal'
-import type { DealRecord, HistoryEntry } from '../engine/Game'
+import type { DealRecord, Game, HistoryEntry } from '../engine/Game'
 import type { PlayerType } from '../engine/PlayerType'
 import {
   BASE_MAX_BID,
-  MARRIAGE_POINTS,
+  MARRIAGE_VALUES,
+  MELD_SYSTEMS,
   beats,
   legalPlays,
+  suitsByValue,
   trickWinnerIndex,
+  type MeldSystem,
 } from '../engine/rules'
 import { strategies } from '../engine/strategies'
 
@@ -91,6 +94,99 @@ export function suitText(color: Color): string {
   return Card.colorToString(color)
 }
 
+/** Suit name for screen readers, which read the suit symbols inconsistently. */
+export function suitName(color: Color, t: Translate): string {
+  switch (color) {
+    case Color.Kier:
+      return t('kier')
+    case Color.Karo:
+      return t('karo')
+    case Color.Trefl:
+      return t('trefl')
+    case Color.Pik:
+      return t('pik')
+  }
+}
+
+/** Names of the marriage value systems in Settings (Polish sources). */
+export const MELD_SYSTEM_NAMES: Readonly<Record<MeldSystem, string>> = {
+  classic: 'Kier, karo, trefl, pik',
+  german: 'Żołądź, wino, serce, dzwonek',
+}
+
+/**
+ * Marriage values, the most valuable first: "♥ 100 · ♦ 80 · ♣ 60 · ♠ 40".
+ * A no-break space keeps each symbol with its value.
+ */
+export function meldValuesText(system: MeldSystem, separator = ' · '): string {
+  const values = MARRIAGE_VALUES[system]
+  return suitsByValue(values)
+    .map(color => `${suitText(color)}\u00a0${values[color]}`)
+    .join(separator)
+}
+
+/** Marriage values with suit names: "kier 100, karo 80, trefl 60, pik 40". */
+export function meldValuesLabel(system: MeldSystem, t: Translate): string {
+  const values = MARRIAGE_VALUES[system]
+  return suitsByValue(values)
+    .map(color => `${suitName(color, t)} ${values[color]}`)
+    .join(', ')
+}
+
+/** What the meld system helpers read from the match. */
+export type MeldSystemState = Pick<Game, 'status' | 'meldSystem' | 'deal'>
+
+/**
+ * The marriage values in force: a deal under way keeps its own; otherwise
+ * the ones chosen for the next deal.
+ */
+export function meldSystemInPlay(game: MeldSystemState): MeldSystem {
+  const inProgress = game.status === 'playing' || game.status === 'dealEnd'
+  return inProgress && game.deal ? game.deal.meldSystem : game.meldSystem
+}
+
+/**
+ * True when the match is under way and its current deal keeps other marriage
+ * values than the ones chosen for the next deal.
+ */
+export function meldSystemPending(game: MeldSystemState): boolean {
+  return meldSystemInPlay(game) !== game.meldSystem
+}
+
+/**
+ * Rule 06 (marriages) with the values in force. It names the other system to
+ * choose in Settings, or, while a choice waits for the next deal, that one.
+ */
+export function meldRulesText(game: MeldSystemState, t: Translate): string {
+  const current = meldSystemInPlay(game)
+  const name = (system: MeldSystem) => t(MELD_SYSTEM_NAMES[system])
+  const values = (system: MeldSystem) => meldValuesText(system, ', ')
+  const other = MELD_SYSTEMS.find(system => system !== current) ?? current
+  const choice =
+    current === game.meldSystem
+      ? t('To wartości „{name}”; w Ustawieniach możesz wybrać „{other}”: {values}.', {
+          name: name(current),
+          other: name(other),
+          values: values(other),
+        })
+      : t(
+          'W tym rozdaniu obowiązują wartości „{name}”. Od następnego rozdania: „{next}” — {values}.',
+          {
+            name: name(current),
+            next: name(game.meldSystem),
+            values: values(game.meldSystem),
+          },
+        )
+  return [
+    t(
+      'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam: {values}. Kolor meldunku staje się atutem i zastępuje poprzedni.',
+      { values: values(current) },
+    ),
+    choice,
+    t('Żołądź to ♣, wino ♠, serce ♥, dzwonek ♦.'),
+  ].join(' ')
+}
+
 /** Text of an auction speech bubble: "110" or "pas". */
 export function bidText(bid: Bid, t: Translate): string | null {
   if (bid === null) return null
@@ -99,7 +195,7 @@ export function bidText(bid: Bid, t: Translate): string | null {
 
 /** Marriage points declared by playing this card now, or 0. */
 export function meldValue(deal: Deal, card: Card): number {
-  return deal.isMeld(card) ? MARRIAGE_POINTS[card.color] : 0
+  return deal.isMeld(card) ? deal.meldValue(card.color) : 0
 }
 
 /**

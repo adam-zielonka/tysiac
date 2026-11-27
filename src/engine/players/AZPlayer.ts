@@ -2,7 +2,7 @@ import type { Action, Deal } from '../Deal'
 import { PlayerType } from '../PlayerType'
 import { BID_STEP, nextSeat } from '../rules'
 import { AlphaBeta, type SearchOptions } from './alphabeta'
-import { cardAt, maskOf } from './bits'
+import { cardAt, maskOf, meldValuesOf } from './bits'
 import { BotPlayer } from './BotPlayer'
 import { bidUpTo, contractUpTo, giftOrder, playAction } from './heuristics'
 import { MOOD_POINTS, moodOf, onlyDefeatCounts, safeContractLimit } from './match'
@@ -99,14 +99,15 @@ export class AZPlayer extends BotPlayer {
     const s = deal.s
     const hands = s.hands.map(hand => maskOf(hand))
     if (s.phase === 'bidding') hands[seat] |= maskOf(s.musik)
-    const key = `${seat}:${hands.join(',')}:${s.gifts.length}`
+    const key = `${s.meldSystem}:${seat}:${hands.join(',')}:${s.gifts.length}`
     const cached = this.plans.get(key)
     if (cached) return cached
     const recipients =
       s.phase === 'giving'
         ? deal.pendingRecipients()
         : [nextSeat(seat), nextSeat(seat, 2)]
-    const order = giftOrder(hands[seat]).slice(0, this.giftCandidates)
+    const values = meldValuesOf(deal)
+    const order = giftOrder(hands[seat], values).slice(0, this.giftCandidates)
     const options: number[][] = []
     for (const first of order) {
       if (recipients.length < 2) options.push([first])
@@ -119,7 +120,7 @@ export class AZPlayer extends BotPlayer {
         layout[seat] &= ~(1 << card)
         layout[recipients[i]] |= 1 << card
       })
-      const st = new PlayState(layout, seat, 0, seat)
+      const st = new PlayState(layout, seat, 0, seat, values)
       const value = this.search(st, this.planBudget, false).value
       if (value > best.value) best = { gifts, value }
     }

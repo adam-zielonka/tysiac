@@ -4,7 +4,15 @@ import { Deck } from './Deck'
 import type { Player } from './Player'
 import { createPlayer, DEFAULT_PLAYERS } from './PlayersSelect'
 import { PlayerType } from './PlayerType'
-import { LOCK_SCORE, PLAYER_COUNT, TARGET_SCORE, nextSeat } from './rules'
+import {
+  DEFAULT_MELD_SYSTEM,
+  LOCK_SCORE,
+  PLAYER_COUNT,
+  TARGET_SCORE,
+  isMeldSystem,
+  nextSeat,
+  type MeldSystem,
+} from './rules'
 import type { Random } from './random'
 import { SubscribableStore } from './utils'
 
@@ -48,6 +56,8 @@ export interface GameOptions {
   firstDealer?: number
   thinkDelay?: number
   trickDelay?: number
+  /** Marriage values of the deals, `classic` by default. */
+  meldSystem?: MeldSystem
 }
 
 const HISTORY_LIMIT = 80
@@ -73,6 +83,11 @@ export class Game extends SubscribableStore {
   trickDelay = 1100
   /** True while the last completed trick is still shown in the centre. */
   showLastTrick = false
+  /**
+   * Marriage values of the next deal (a rule of the match). The deal in
+   * progress keeps its own, `deal.meldSystem`.
+   */
+  meldSystem: MeldSystem = DEFAULT_MELD_SYSTEM
   readonly target = TARGET_SCORE
   readonly lockScore = LOCK_SCORE
 
@@ -86,6 +101,7 @@ export class Game extends SubscribableStore {
     this.firstDealer = options.firstDealer ?? 0
     if (options.thinkDelay !== undefined) this.thinkDelay = options.thinkDelay
     if (options.trickDelay !== undefined) this.trickDelay = options.trickDelay
+    if (isMeldSystem(options.meldSystem)) this.meldSystem = options.meldSystem
     this.playersSelect = [...(options.players ?? DEFAULT_PLAYERS)]
     this.players = this.createPlayers()
     if (options.autoStart) this.startMatch()
@@ -119,6 +135,18 @@ export class Game extends SubscribableStore {
     if (Number.isFinite(thinkDelay) && thinkDelay >= 0) this.thinkDelay = thinkDelay
     if (Number.isFinite(trickDelay) && trickDelay >= 0) this.trickDelay = trickDelay
     this.notify()
+  }
+
+  /**
+   * Chooses the marriage values (invalid values are ignored). A deal never
+   * changes them midway: during a match the new values apply from the next
+   * deal. Returns whether the value was accepted.
+   */
+  setMeldSystem(system: MeldSystem): boolean {
+    if (!isMeldSystem(system)) return false
+    this.meldSystem = system
+    this.notify()
+    return true
   }
 
   /** Only seat 0 may be a human; it may also be a bot to watch the game. */
@@ -199,7 +227,9 @@ export class Game extends SubscribableStore {
   private startDeal(dealer: number): void {
     this.clearTimer()
     this.dealNumber++
-    this.deal = Deal.deal(dealer, Deck.shuffle(Deck.generate(), this.random))
+    this.deal = Deal.deal(dealer, Deck.shuffle(Deck.generate(), this.random), {
+      meldSystem: this.meldSystem,
+    })
     this.status = 'playing'
     this.showLastTrick = false
     this.log({ kind: 'deal', player: dealer })

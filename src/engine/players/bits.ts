@@ -1,5 +1,6 @@
 import { ALL_CARDS, COLORS, cardIndex, type Card, type Color } from '../Card'
-import { MARRIAGE_POINTS } from '../rules'
+import type { Deal } from '../Deal'
+import { MARRIAGE_VALUES, type MarriageValues, type MeldSystem } from '../rules'
 
 /*
  * Compact card sets for the bots. Bit `i` stands for `ALL_CARDS[i]`: six cards
@@ -21,8 +22,15 @@ export const SUIT_OF: readonly number[] = ALL_CARDS.map((_, i) => (i / 6) | 0)
 /** Position inside the suit: 0 ace, 1 ten, 2 king, 3 queen, 4 jack, 5 nine. */
 export const ORDER_OF: readonly number[] = ALL_CARDS.map((_, i) => i % 6)
 export const POINTS_OF: readonly number[] = ALL_CARDS.map(card => card.points)
-/** Marriage value per suit index: ♥ 100, ♦ 80, ♣ 60, ♠ 40. */
-export const MELD_VALUE: readonly number[] = COLORS.map(color => MARRIAGE_POINTS[color])
+/**
+ * Marriage value per suit index (♥ ♦ ♣ ♠) of each meld system: classic
+ * 100, 80, 60, 40; german 60, 40, 100, 80. Suit indices are not in value
+ * order, so code that wants the most valuable marriage compares the values.
+ */
+export const MELD_VALUES: Readonly<Record<MeldSystem, readonly number[]>> = {
+  classic: suitValues(MARRIAGE_VALUES.classic),
+  german: suitValues(MARRIAGE_VALUES.german),
+}
 /** King and queen of a suit. */
 export const MARRIAGE_MASK: readonly number[] = [0, 1, 2, 3].map(
   suit => (1 << (suit * 6 + KING)) | (1 << (suit * 6 + QUEEN)),
@@ -36,6 +44,16 @@ const SUIT_POINTS: number[] = Array.from({ length: 64 }, (_, bits) => {
 })
 
 export { cardIndex }
+
+/** Marriage values of a meld system per suit index. */
+export function suitValues(values: MarriageValues): readonly number[] {
+  return Object.freeze(COLORS.map(color => values[color]))
+}
+
+/** Marriage value per suit index in this deal (shared, do not modify). */
+export function meldValuesOf(deal: Deal): readonly number[] {
+  return MELD_VALUES[deal.meldSystem]
+}
 
 export function cardAt(index: number): Card {
   return ALL_CARDS[index]
@@ -96,17 +114,27 @@ export function hasMarriage(hand: number, suit: number): boolean {
   return (hand & MARRIAGE_MASK[suit]) === MARRIAGE_MASK[suit]
 }
 
-/** Suits with a held marriage, the most valuable first. */
-export function marriageSuits(hand: number): number[] {
+/** Suits with a held marriage, the most valuable first (`values` per suit index). */
+export function marriageSuits(hand: number, values: readonly number[]): number[] {
   const result: number[] = []
   for (let suit = 0; suit < SUITS; suit++) if (hasMarriage(hand, suit)) result.push(suit)
-  return result
+  return result.sort((a, b) => values[b] - values[a])
 }
 
-export function marriageTotal(hand: number): number {
+/** Suit of the most valuable marriage held, or -1. */
+export function bestMarriageSuit(hand: number, values: readonly number[]): number {
+  let best = -1
+  for (let suit = 0; suit < SUITS; suit++) {
+    if (hasMarriage(hand, suit) && (best < 0 || values[suit] > values[best])) best = suit
+  }
+  return best
+}
+
+/** Total value of the marriages held (`values` per suit index). */
+export function marriageTotal(hand: number, values: readonly number[]): number {
   let sum = 0
   for (let suit = 0; suit < SUITS; suit++)
-    if (hasMarriage(hand, suit)) sum += MELD_VALUE[suit]
+    if (hasMarriage(hand, suit)) sum += values[suit]
   return sum
 }
 

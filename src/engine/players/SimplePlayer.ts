@@ -8,6 +8,7 @@ import {
   cardIndex,
   isMarriageCard,
   maskOf,
+  meldValuesOf,
 } from './bits'
 import { auctionEstimate, bidUpTo, greedyCard, playAction } from './heuristics'
 import { PlayState } from './PlayState'
@@ -23,7 +24,8 @@ export class SimplePlayer extends BotPlayer {
   readonly type = PlayerType.Simple
 
   protected bid(deal: Deal, actions: Action[]): Action {
-    return bidUpTo(deal, actions, auctionEstimate(maskOf(deal.hand(deal.turn))))
+    const estimate = auctionEstimate(maskOf(deal.hand(deal.turn)), meldValuesOf(deal))
+    return bidUpTo(deal, actions, estimate)
   }
 
   protected give(deal: Deal, actions: Action[]): Action {

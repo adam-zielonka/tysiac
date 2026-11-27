@@ -2,7 +2,6 @@ import type { Deal } from '../Deal'
 import { PLAYER_COUNT, TRICK_COUNT, roundScore } from '../rules'
 import {
   KING,
-  MELD_VALUE,
   ORDER_OF,
   POINTS_OF,
   QUEEN,
@@ -14,6 +13,7 @@ import {
   inferred,
   legalMask,
   maskOf,
+  meldValuesOf,
   suitOfColor,
 } from './bits'
 
@@ -22,7 +22,8 @@ import {
  * (follow suit and overtake, a winning trump when void, marriages in any
  * trick, trump changes) and the same public inference, but cheap to copy,
  * so searches can play thousands of deals. Hidden hands of a view are simply
- * empty masks.
+ * empty masks. `meldValues` are the deal's marriage values per suit index
+ * (`MELD_VALUES[system]` or `meldValuesOf(deal)`).
  */
 export class PlayState {
   constructor(
@@ -30,6 +31,7 @@ export class PlayState {
     public declarer: number,
     public contract: number,
     public leader: number,
+    readonly meldValues: readonly number[],
     public trump = -1,
     public trickNumber = 0,
     /** Card indices of the current trick in play order. */
@@ -53,6 +55,7 @@ export class PlayState {
       s.declarer,
       s.contract,
       inPlay ? s.leader : s.declarer,
+      meldValuesOf(deal),
       s.trump === null ? -1 : suitOfColor(s.trump),
       s.trickNumber,
       s.trick.map(play => cardIndex(play.card)),
@@ -75,6 +78,7 @@ export class PlayState {
       this.declarer,
       this.contract,
       this.leader,
+      this.meldValues,
       this.trump,
       this.trickNumber,
       this.trick.slice(),
@@ -138,7 +142,7 @@ export class PlayState {
       const order = ORDER_OF[card]
       if (this.isMeld(card)) {
         this.trump = suit
-        this.meldPoints[player] += MELD_VALUE[suit]
+        this.meldPoints[player] += this.meldValues[suit]
       } else if (order === KING || order === QUEEN) {
         // Declaring is automatic: the leader does not hold the partner.
         this.excluded[player] |= 1 << (card - order + (order === KING ? QUEEN : KING))

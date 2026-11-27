@@ -1,7 +1,7 @@
 import type { Action, Deal } from '../Deal'
 import { PlayerType } from '../PlayerType'
 import { BID_STEP } from '../rules'
-import { maskOf } from './bits'
+import { maskOf, meldValuesOf } from './bits'
 import {
   auctionEstimate,
   bidUpTo,
@@ -42,7 +42,7 @@ export class TacticalPlayer extends BotPlayer {
 
   protected bid(deal: Deal, actions: Action[]): Action {
     const mood = moodOf(deal, this.matchScores)
-    const estimate = auctionEstimate(maskOf(deal.hand(deal.turn)))
+    const estimate = auctionEstimate(maskOf(deal.hand(deal.turn)), meldValuesOf(deal))
     return bidUpTo(deal, actions, estimate - this.margin + mood * MOOD_POINTS)
   }
 
@@ -51,7 +51,7 @@ export class TacticalPlayer extends BotPlayer {
   }
 
   protected declare(deal: Deal, actions: Action[]): Action {
-    const estimate = declarerEstimate(maskOf(deal.hand(deal.turn)))
+    const estimate = declarerEstimate(maskOf(deal.hand(deal.turn)), meldValuesOf(deal))
     const limit = Math.floor((estimate - this.contractMargin) / BID_STEP) * BID_STEP
     return contractUpTo(actions, safeContractLimit(this.matchScores, deal.turn, limit))
   }

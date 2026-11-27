@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { type Card, cards } from '../../engine/Card'
+import { Color, type Card, cards } from '../../engine/Card'
 import { Deal, type Action } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import { Game, type HistoryEntry } from '../../engine/Game'
@@ -7,7 +7,7 @@ import type { Player } from '../../engine/Player'
 import { DEFAULT_PLAYERS, createPlayer } from '../../engine/PlayersSelect'
 import { PlayerType } from '../../engine/PlayerType'
 import { seededRandom } from '../../engine/random'
-import { roundScore } from '../../engine/rules'
+import { MARRIAGE_VALUES, roundScore, type MeldSystem } from '../../engine/rules'
 import { ChaosPlayer, GreedyTestPlayer } from './helpers'
 
 const BOTS = [PlayerType.Random, PlayerType.Random, PlayerType.Random]
@@ -852,6 +852,54 @@ it('changes the pace from the next timer on and ignores invalid values', () => {
   game.setPace(Infinity, 0)
   expect([game.thinkDelay, game.trickDelay]).toEqual([300, 0])
   expect(notify).toHaveBeenCalledTimes(5)
+})
+
+it('applies a new meld system from the next deal and ignores invalid values', () => {
+  expect(new Game().meldSystem).toBe('classic')
+  expect(newGame(BOTS, { meldSystem: 'nope' as MeldSystem }).meldSystem).toBe('classic')
+  const game = newGame(BOTS, { meldSystem: 'german', firstDealer: 2 })
+  expect(game.meldSystem).toBe('german')
+  const notify = vi.fn()
+  game.subscribe(notify)
+  notify.mockClear()
+  // Seat 0 holds K♥ Q♥ and declares at 100 (see `deckOf`).
+  stackDeck(SLAM_DECK)
+  game.startMatch()
+  useGreedyBots(game)
+  const deal = game.deal!
+  expect(deal.meldSystem).toBe('german')
+  for (let i = 0; i < 6; i++) vi.advanceTimersToNextTimer()
+  expect(game.status).toBe('playing')
+  notify.mockClear()
+  // Changing it mid-deal keeps the deal in progress as it is.
+  expect(game.setMeldSystem('classic')).toBe(true)
+  expect(notify).toHaveBeenCalledTimes(1)
+  expect(game.meldSystem).toBe('classic')
+  expect(game.deal).toBe(deal)
+  expect(deal.meldSystem).toBe('german')
+  for (const value of ['', 'German', 'french', undefined, 7]) {
+    expect(game.setMeldSystem(value as MeldSystem)).toBe(false)
+  }
+  expect(game.meldSystem).toBe('classic')
+  expect(notify).toHaveBeenCalledTimes(1)
+  runBots(game)
+  expect(game.status).toBe('dealEnd')
+  // The marriages of the first deal count in German values: serce (♥) 60.
+  const melds = game.history.flatMap(entry => (entry.kind === 'meld' ? [entry] : []))
+  expect(melds.length).toBeGreaterThan(0)
+  for (const meld of melds) expect(meld.value).toBe(MARRIAGE_VALUES.german[meld.color])
+  expect(melds[0]).toMatchObject({ player: 0, color: Color.Kier, value: 60 })
+  expect(deal.result()!.meldPoints[0]).toBeGreaterThanOrEqual(60)
+
+  game.nextDeal()
+  expect(game.deal).not.toBe(deal)
+  expect(game.deal!.meldSystem).toBe('classic')
+  // The setting stays for new matches.
+  game.prepare()
+  expect(game.meldSystem).toBe('classic')
+  game.setMeldSystem('german')
+  game.startMatch()
+  expect(game.deal!.meldSystem).toBe('german')
 })
 
 it('tells each bot the match totals before the deal when it decides', () => {

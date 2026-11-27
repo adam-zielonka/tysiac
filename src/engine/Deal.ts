@@ -1,8 +1,9 @@
 import { ALL_CARDS, COLORS, Card, Color, cardById, suitMask } from './Card'
 import { Deck } from './Deck'
 import {
+  DEFAULT_MELD_SYSTEM,
   HAND_SIZE,
-  MARRIAGE_POINTS,
+  MARRIAGE_VALUES,
   MUSIK_SIZE,
   OPENING_BID,
   PLAYER_COUNT,
@@ -13,11 +14,14 @@ import {
   excludedByLead,
   excludedByPlay,
   isMeldLead,
+  isMeldSystem,
   legalPlays,
   maxBidFor,
   nextSeat,
   roundScore,
   trickWinnerIndex,
+  type MarriageValues,
+  type MeldSystem,
 } from './rules'
 
 export type Phase = 'bidding' | 'musik' | 'giving' | 'contract' | 'play' | 'finished'
@@ -76,6 +80,8 @@ export interface DealResult {
 
 export interface DealState {
   dealer: number
+  /** Marriage values of this deal: public and fixed until the scoring. */
+  meldSystem: MeldSystem
   phase: Phase
   turn: number
   hands: Card[][]
@@ -144,6 +150,11 @@ export function sameAction(a: Action, b: Action): boolean {
   return actionKey(a) === actionKey(b)
 }
 
+export interface DealOptions {
+  /** Marriage values of the deal, `classic` by default. */
+  meldSystem?: MeldSystem
+}
+
 function emptyVoids(): boolean[][] {
   return Array.from({ length: PLAYER_COUNT }, () => [false, false, false, false, false])
 }
@@ -155,9 +166,17 @@ function emptyVoids(): boolean[][] {
 export class Deal {
   constructor(public s: DealState) {}
 
-  static deal(dealer: number, cards: Card[] = Deck.shuffle(Deck.generate())): Deal {
+  static deal(
+    dealer: number,
+    cards: Card[] = Deck.shuffle(Deck.generate()),
+    options: DealOptions = {},
+  ): Deal {
     if (!Number.isInteger(dealer) || dealer < 0 || dealer >= PLAYER_COUNT) {
       throw new Error(`Invalid dealer seat: ${dealer}`)
+    }
+    const meldSystem = options.meldSystem ?? DEFAULT_MELD_SYSTEM
+    if (!isMeldSystem(meldSystem)) {
+      throw new Error(`Unknown meld system: ${String(meldSystem)}`)
     }
     if (cards.length !== PLAYER_COUNT * HAND_SIZE + MUSIK_SIZE) {
       throw new Error('A Tysiąc deck has 24 cards')
@@ -181,6 +200,7 @@ export class Deal {
     maxBids[opener] = OPENING_BID
     return new Deal({
       dealer,
+      meldSystem,
       phase: 'bidding',
       turn: nextSeat(opener),
       hands,
@@ -219,6 +239,7 @@ export class Deal {
     // faster than a spread; TypeScript reports a missing one.
     return new Deal({
       dealer: s.dealer,
+      meldSystem: s.meldSystem,
       phase: s.phase,
       turn: s.turn,
       hands: s.hands.map(hand => hand.slice()),
@@ -264,6 +285,20 @@ export class Deal {
 
   get opener(): number {
     return nextSeat(this.s.dealer)
+  }
+
+  get meldSystem(): MeldSystem {
+    return this.s.meldSystem
+  }
+
+  /** Marriage value of every suit in this deal. */
+  get meldValues(): MarriageValues {
+    return MARRIAGE_VALUES[this.s.meldSystem]
+  }
+
+  /** Value of a marriage in `color` in this deal. */
+  meldValue(color: Color): number {
+    return this.meldValues[color]
   }
 
   get declarer(): number {
@@ -329,7 +364,7 @@ export class Deal {
 
   /** Bid limit for a visible hand during the auction or contract choice. */
   maxBid(player: number): number {
-    return maxBidFor(this.s.hands[player])
+    return maxBidFor(this.s.hands[player], this.meldValues)
   }
 
   /** Cards the current player may play now. */
@@ -510,7 +545,7 @@ export class Deal {
     const events: DealEvent[] = []
     const hand = s.hands[player]
     if (isMeldLead(hand, card, s.trick.length === 0)) {
-      const points = MARRIAGE_POINTS[card.color]
+      const points = this.meldValue(card.color)
       s.trump = card.color
       s.melds.push({ player, color: card.color, points, trick: s.trickNumber })
       s.knownHolders[card.marriagePartner!.id] = player

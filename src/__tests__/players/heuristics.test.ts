@@ -1,21 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { Figure, cards, type Card } from '../../engine/Card'
+import { Color, Figure, cards, type Card } from '../../engine/Card'
 import { Deck } from '../../engine/Deck'
 import { seededRandom } from '../../engine/random'
 import type { Action } from '../../engine/Deal'
 import { PlayerType } from '../../engine/PlayerType'
-import { cardAt, cardIndex, isMarriageCard, maskOf } from '../../engine/players/bits'
+import { MELD_SYSTEMS, type MeldSystem } from '../../engine/rules'
+import {
+  MELD_VALUES,
+  cardAt,
+  cardIndex,
+  isMarriageCard,
+  maskOf,
+} from '../../engine/players/bits'
 import {
   auctionEstimate,
   bidUpTo,
   contractUpTo,
   declarerEstimate,
+  estimateFeatures,
   giftOrder,
   greedyCard,
   tacticalCard,
 } from '../../engine/players/heuristics'
 import { PlayState } from '../../engine/players/PlayState'
-import { bot, dealOf, decide, play, toPlay } from './helpers'
+import { toGerman } from '../engine/helpers'
+import { bot, dealOf, decide, play, playOut, toPlay } from './helpers'
+
+const CLASSIC = MELD_VALUES.classic
+const GERMAN = MELD_VALUES.german
 
 /** Seat 1 opens and plays 100 holding the ♥ marriage and the ace of spades. */
 function marriageDeal(withSecondAce: boolean) {
@@ -103,7 +115,19 @@ describe('tactical card play', () => {
   it('cashes a ten once the overtaking rule shows the declarer lacks the ace', () => {
     const hands = [cards('9♠ Q♣ 9♦'), cards('10♠ 9♣ J♣'), cards('A♠ K♠ J♦')].map(maskOf)
     const played = 0xffffff & ~(hands[0] | hands[1] | hands[2])
-    const st = new PlayState(hands, 0, 100, 1, -1, 5, [], [0, 0, 0], [0, 0, 0], played)
+    const st = new PlayState(
+      hands,
+      0,
+      100,
+      1,
+      CLASSIC,
+      -1,
+      5,
+      [],
+      [0, 0, 0],
+      [0, 0, 0],
+      played,
+    )
     // Unknown holders: the ten is not safe against the ace and the king.
     expect(cardAt(tacticalCard(st)).id).not.toBe('10♠')
     // The declarer once followed spades below a queen: no ace, ten or king.
@@ -145,7 +169,7 @@ describe('greedy card play', () => {
 describe('gifts and estimates', () => {
   it('gives away low cards, never an ace or a marriage card first', () => {
     const hand = maskOf(cards('A♥ 10♥ K♥ Q♥ A♠ K♣ 9♦ J♦ 9♠ J♣'))
-    const [first, second] = giftOrder(hand).map(card => cardAt(card).id)
+    const [first, second] = giftOrder(hand, CLASSIC).map(card => cardAt(card).id)
     expect(['9♦', 'J♦', '9♠', 'J♣']).toContain(first)
     expect(['9♦', 'J♦', '9♠', 'J♣']).toContain(second)
   })
@@ -155,7 +179,7 @@ describe('gifts and estimates', () => {
     const random = seededRandom(7)
     for (let n = 0; n < 2000; n++) {
       const hand = Deck.shuffle(Deck.generate(), random).slice(0, 10)
-      const order = giftOrder(maskOf(hand)).map(cardAt)
+      const order = giftOrder(maskOf(hand), n % 2 ? GERMAN : CLASSIC).map(cardAt)
       const inSuit = (card: Card) => hand.filter(c => c.color === card.color)
       const lone = (card: Card) =>
         card.isMarriageCard && !inSuit(card).includes(card.marriagePartner!)
@@ -187,10 +211,12 @@ describe('gifts and estimates', () => {
   it('values aces, tens and marriages', () => {
     const strong = maskOf(cards('A♥ 10♥ K♥ Q♥ A♦ A♣ A♠'))
     const weak = maskOf(cards('9♥ J♦ 9♦ J♣ 9♣ J♠ 9♠'))
-    expect(auctionEstimate(strong)).toBeGreaterThan(160)
-    expect(auctionEstimate(weak)).toBeLessThan(60)
-    expect(declarerEstimate(maskOf(cards('A♥ 10♥ K♥ Q♥ A♦ 10♦ A♣ A♠')))).toBeGreaterThan(
-      declarerEstimate(maskOf(cards('A♥ 10♥ K♥ J♥ A♦ 10♦ A♣ A♠'))),
+    expect(auctionEstimate(strong, CLASSIC)).toBeGreaterThan(160)
+    expect(auctionEstimate(weak, CLASSIC)).toBeLessThan(60)
+    expect(
+      declarerEstimate(maskOf(cards('A♥ 10♥ K♥ Q♥ A♦ 10♦ A♣ A♠')), CLASSIC),
+    ).toBeGreaterThan(
+      declarerEstimate(maskOf(cards('A♥ 10♥ K♥ J♥ A♦ 10♦ A♣ A♠')), CLASSIC),
     )
   })
 
@@ -215,5 +241,108 @@ describe('gifts and estimates', () => {
 
   it('indexes cards consistently', () => {
     for (const card of cards('A♥ 9♠ K♦ Q♣')) expect(cardAt(cardIndex(card))).toBe(card)
+  })
+})
+
+describe('German marriage values', () => {
+  /**
+   * Dealer 2: seat 0 opens at 100 and seat 1 bids 120; Tosia (seat 2) holds
+   * K♣ Q♣ and K♥ Q♥ with A♣ 10♣ A♠, the musik is J♣ 9♣ K♠.
+   */
+  function marriagesDeal(meldSystem: MeldSystem) {
+    const deal = dealOf(
+      ['9♥ J♥ 10♥ 9♦ J♦ 10♦ 9♠', 'A♥ K♦ Q♦ A♦ 10♠ J♠ Q♠', 'K♣ Q♣ K♥ Q♥ A♣ 10♣ A♠'],
+      'J♣ 9♣ K♠',
+      2,
+      { meldSystem },
+    )
+    deal.apply({ type: 'bid', value: 120 })
+    return deal
+  }
+
+  it.each(MELD_SYSTEMS)(
+    'lets Tosia bid above 120 and declare the most valuable marriage first (%s)',
+    meldSystem => {
+      const deal = marriagesDeal(meldSystem)
+      expect(deal.turn).toBe(2)
+      const tosia = bot(PlayerType.Tactical, 2)
+      const bid = decide(deal, tosia)
+      expect(bid).toEqual({ type: 'bid', value: 130 })
+      deal.apply(bid)
+      deal.apply({ type: 'pass' })
+      deal.apply({ type: 'pass' })
+      expect(deal.declarer).toBe(2)
+      playOut(
+        deal,
+        [0, 1, 2].map(seat => (seat === 2 ? tosia : bot(PlayerType.Tactical, seat))),
+      )
+      expect(deal.contract).toBeGreaterThan(120)
+      // Żołądź (♣) is worth 100 in German values, kier (♥) in classic ones.
+      const first = deal.s.melds.find(meld => meld.player === 2)
+      expect(first).toMatchObject({
+        color: meldSystem === 'german' ? Color.Trefl : Color.Kier,
+        points: 100,
+      })
+      expect(deal.result()!.meldPoints[2]).toBeGreaterThanOrEqual(100)
+    },
+  )
+
+  it('gives a German hand exactly the estimates and gifts of its classic twin', () => {
+    const random = seededRandom(11)
+    let marriages = 0
+    for (let n = 0; n < 400; n++) {
+      const deck = Deck.shuffle(Deck.generate(), random)
+      const hand = (count: number, german: boolean) =>
+        maskOf(deck.slice(0, count).map(card => (german ? toGerman(card) : card)))
+      if (estimateFeatures(hand(8, false), CLASSIC)[7]) marriages++
+      expect(estimateFeatures(hand(8, true), GERMAN)).toEqual(
+        estimateFeatures(hand(8, false), CLASSIC),
+      )
+      expect(declarerEstimate(hand(8, true), GERMAN)).toBe(
+        declarerEstimate(hand(8, false), CLASSIC),
+      )
+      expect(giftOrder(hand(10, true), GERMAN).map(cardAt)).toEqual(
+        giftOrder(hand(10, false), CLASSIC).map(cardAt).map(toGerman),
+      )
+      if (n < 20) {
+        expect(auctionEstimate(hand(7, true), GERMAN)).toBeCloseTo(
+          auctionEstimate(hand(7, false), CLASSIC),
+          9,
+        )
+      }
+    }
+    expect(marriages).toBeGreaterThan(50)
+    // The same cards are worth more with żołądź (♣ 100) than with trefl (♣ 60).
+    const clubs = maskOf(cards('K♣ Q♣ A♣ 10♣ A♠ A♦ 9♥'))
+    expect(auctionEstimate(clubs, GERMAN)).toBeGreaterThan(
+      auctionEstimate(clubs, CLASSIC),
+    )
+  })
+
+  it('declares the most valuable German marriage when leading greedily', () => {
+    const deal = toPlay(
+      dealOf(
+        ['A♥ 10♥ J♦ 10♦ A♣ 10♣ K♠', 'A♠ A♦ K♥ Q♥ K♣ Q♣ J♣', '10♠ Q♠ K♦ Q♦ 9♣ J♥ 9♦'],
+        '9♠ 9♥ J♠',
+        0,
+        { meldSystem: 'german' },
+      ),
+      ['9♠', '9♥'],
+    )
+    expect(deal.turn).toBe(1)
+    expect(cardAt(greedyCard(PlayState.fromDeal(deal))).id).toBe('K♣')
+  })
+
+  it('leads the ace of the more valuable marriage suit when aces tie', () => {
+    const hands = [
+      'A♥ A♣ 10♥ 9♦ J♦ 9♣ J♠ 9♠',
+      'K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦',
+      '10♣ K♣ Q♣ J♣ A♠ 10♠ K♠ Q♠',
+    ].map(hand => maskOf(cards(hand)))
+    const lead = (values: readonly number[]) =>
+      cardAt(greedyCard(new PlayState(hands, 0, 100, 0, values))).id
+    // Kier (♥ 100) in classic values, żołądź (♣ 100) in German ones.
+    expect(lead(CLASSIC)).toBe('A♥')
+    expect(lead(GERMAN)).toBe('A♣')
   })
 })

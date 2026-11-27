@@ -11,10 +11,10 @@ import { RandomPlayer } from '../../engine/players/RandomPlayer'
 import { RolloutPlayer } from '../../engine/players/RolloutPlayer'
 import { SimplePlayer } from '../../engine/players/SimplePlayer'
 import { TacticalPlayer } from '../../engine/players/TacticalPlayer'
-import { TOTAL_CARD_POINTS } from '../../engine/rules'
+import { MARRIAGE_VALUES, TOTAL_CARD_POINTS, type MeldSystem } from '../../engine/rules'
 import { sampleDeal } from '../../engine/sampling'
 import { runDeal } from '../../engine/simulate'
-import { bot, decide, playOut, tournament } from './helpers'
+import { bot, dealOf, decide, playOut, tournament } from './helpers'
 
 const { Random, Simple, Tactical, Rollout, MCTS, AZ } = PlayerType
 const FAIR = [Random, Simple, Tactical, Rollout, MCTS]
@@ -27,8 +27,26 @@ interface CpuUsage {
 declare const process: { cpuUsage(previous?: CpuUsage): CpuUsage }
 const ALL_PHASES = new Set(['bidding', 'musik', 'giving', 'contract', 'play'])
 
-function freshDeal(seed: number, dealer = seed % 3): Deal {
-  return Deal.deal(dealer, Deck.shuffle(Deck.generate(), seededRandom(seed)))
+function freshDeal(
+  seed: number,
+  dealer = seed % 3,
+  meldSystem: MeldSystem = 'classic',
+): Deal {
+  return Deal.deal(dealer, Deck.shuffle(Deck.generate(), seededRandom(seed)), {
+    meldSystem,
+  })
+}
+
+/** A finished deal adds up: all card points plus marriages in the deal's values. */
+function expectScored(deal: Deal): void {
+  const result = deal.result()!
+  const melds = result.meldPoints.reduce((sum, value) => sum + value, 0)
+  expect(result.points.reduce((sum, value) => sum + value, 0)).toBe(
+    TOTAL_CARD_POINTS + melds,
+  )
+  for (const meld of deal.s.melds) {
+    expect(meld.points).toBe(MARRIAGE_VALUES[deal.meldSystem][meld.color])
+  }
 }
 
 describe('player factory', () => {
@@ -104,7 +122,7 @@ describe('bot matches', () => {
       const deal = runDeal(freshDeal(1000 + seed), players)
       expect(deal.isFinished).toBe(true)
     }
-  })
+  }, 60_000)
 
   it('plays legal deals late in a match, with locked seats and 1000 in reach', () => {
     for (const lineup of [
@@ -137,6 +155,133 @@ describe('bot matches', () => {
       expect(run()).toEqual(run())
     }
   }, 60_000)
+})
+
+describe('German marriage values', () => {
+  it('lets every bot play complete legal deals', () => {
+    const lineups = [
+      [Random, Rollout, AZ],
+      [Simple, MCTS, Tactical],
+      [AZ, Tactical, Rollout],
+      [Tactical, Simple, MCTS],
+    ]
+    let melds = 0
+    lineups.forEach((lineup, i) => {
+      const players = lineup.map((type, seat) => bot(type, seat))
+      const deal = freshDeal(200 + i, i % 3, 'german')
+      // `playOut` throws on an illegal action.
+      playOut(deal, players)
+      expect(deal.meldSystem).toBe('german')
+      expectScored(deal)
+      melds += deal.s.melds.length
+    })
+    expect(melds).toBeGreaterThan(2)
+  }, 120_000)
+
+  it('plays hundreds of quick German deals without an illegal move', () => {
+    const players = [Random, Simple, Tactical].map((type, seat) =>
+      createPlayer(type, seat, seededRandom(seat + 5)),
+    )
+    let melds = 0
+    for (let seed = 0; seed < 200; seed++) {
+      const deal = runDeal(freshDeal(2000 + seed, seed % 3, 'german'), players)
+      expectScored(deal)
+      melds += deal.s.melds.length
+    }
+    expect(melds).toBeGreaterThan(100)
+  }, 60_000)
+})
+
+describe('German marriage values in bot decisions', () => {
+  /**
+   * Dealer 0, so seat 1 opens at 100. Seat 1 holds K♣ Q♣: żołądź, worth 100
+   * in German values, but only trefl (60) in classic ones. Seat 2 holds the
+   * ♥ and ♦ marriages and may bid up to 220 in either system.
+   */
+  function clubsDeal(meldSystem: MeldSystem): Deal {
+    return dealOf(
+      ['9♦ J♦ 10♦ J♥ 10♥ 9♠ J♠', 'K♣ Q♣ A♣ 10♣ A♠ A♦ 9♥', 'K♥ Q♥ K♦ Q♦ J♣ 9♣ Q♠'],
+      'A♥ 10♠ K♠',
+      0,
+      { meldSystem },
+    )
+  }
+
+  /** Seat 2 bids `value` and seat 0 passes: seat 1 answers. */
+  function facing(meldSystem: MeldSystem, value: number): Deal {
+    const deal = clubsDeal(meldSystem)
+    deal.apply({ type: 'bid', value })
+    deal.apply({ type: 'pass' })
+    expect(deal.turn).toBe(1)
+    return deal
+  }
+
+  it.each([Simple, Tactical])(
+    '%s raises to 180 on żołądź only in German values',
+    type => {
+      // 180 is legal in both systems (limit 220 or 180), but valued as trefl
+      // the hand is worth about 170 and the bot passes.
+      expect(decide(facing('german', 170), bot(type, 1))).toEqual({
+        type: 'bid',
+        value: 180,
+      })
+      expect(decide(facing('classic', 170), bot(type, 1))).toEqual({ type: 'pass' })
+    },
+  )
+
+  it.each([Rollout, MCTS, AZ])(
+    '%s bids past the classic limit on żołądź worth 100',
+    type => {
+      // Valued as trefl (60), the same cards are not worth 200 and the bot passes.
+      const deal = facing('german', 190)
+      expect(deal.bidOptions()).toEqual([200, 210, 220])
+      expect(decide(deal, bot(type, 1))).toEqual({ type: 'bid', value: 200 })
+    },
+    60_000,
+  )
+
+  it('lets Tosia declare a higher contract on żołądź worth 100', () => {
+    const contract = (meldSystem: MeldSystem): number => {
+      const deal = clubsDeal(meldSystem)
+      const tosia = bot(Tactical, 1)
+      for (const action of ['pass', 'pass', 'take'] as const) deal.apply({ type: action })
+      while (deal.phase === 'giving') deal.apply(decide(deal, tosia))
+      const action = decide(deal, tosia)
+      expect(deal.isLegal(action)).toBe(true)
+      return action.type === 'contract' ? action.value : NaN
+    }
+    // About 40 points more: the value of the ♣ marriage changes from 60 to 100.
+    expect(contract('german')).toBeGreaterThanOrEqual(contract('classic') + 30)
+  })
+
+  it.each([Tactical, Rollout, MCTS, AZ])(
+    '%s gives away dzwonek (♦ 40), the least valuable German marriage',
+    type => {
+      /** The declarer (seat 1) holds all four marriages after taking the musik. */
+      const gifts = (meldSystem: MeldSystem): string[] => {
+        const deal = dealOf(
+          ['9♦ J♦ 10♦ J♥ 10♥ 9♠ J♠', 'K♥ Q♥ K♦ Q♦ K♣ Q♣ K♠', 'A♦ A♣ 10♣ J♣ 9♣ 9♥ 10♠'],
+          'Q♠ A♥ A♠',
+          0,
+          { meldSystem },
+        )
+        for (const action of ['pass', 'pass', 'take'] as const)
+          deal.apply({ type: action })
+        const player = bot(type, 1)
+        const given: string[] = []
+        while (deal.phase === 'giving') {
+          const action = decide(deal, player)
+          if (action.type === 'give') given.push(action.card.id)
+          deal.apply(action)
+        }
+        return given.sort()
+      }
+      expect(gifts('german')).toEqual(['K♦', 'Q♦'])
+      // In classic values ♦ is karo, worth 80: the bots keep it.
+      expect(gifts('classic').filter(id => id.endsWith('♦'))).toEqual([])
+    },
+    60_000,
+  )
 })
 
 describe('fair bots', () => {

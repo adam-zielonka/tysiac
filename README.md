@@ -80,8 +80,13 @@ granice.
   przebić atutem, jeśli któryś atut wygrywa lewę; nikt nie musi podbijać
   niższym atutem. Rozgrywający wychodzi do pierwszej lewy.
 - **Meldunki:** wyjście królem lub damą z pary w ręce — w dowolnej lewie, także
-  pierwszej — zgłasza meldunek automatycznie: ♥ 100, ♦ 80, ♣ 60, ♠ 40.
-  Jego kolor staje się atutem.
+  pierwszej — zgłasza meldunek automatycznie. Jego kolor staje się atutem.
+  Wartości wybiera się w Ustawieniach („Wartości meldunków”): domyślnie
+  „Kier, karo, trefl, pik” — ♥ 100, ♦ 80, ♣ 60, ♠ 40 — albo alternatywna
+  punktacja „Żołądź, wino, serce, dzwonek”, nazwana od kolorów talii
+  niemieckiej: żołądź (♣) 100, wino (♠) 80, serce (♥) 60, dzwonek (♦) 40.
+  Karty zachowują francuskie symbole, a zmiana w trakcie partii obowiązuje od
+  następnego rozdania. Wybór zapamiętuje przeglądarka.
 - **Zapis:** rozgrywający dostaje kontrakt, jeśli zdobył co najmniej tyle punktów
   (karty i meldunki), w przeciwnym razie go traci. Obrońcy zapisują swoje
   punkty zaokrąglone do 10 (5 w górę).
@@ -103,3 +108,4 @@ The browser version supports Polish and English. On the first visit it uses the
 first supported language from the browser’s preferences, falling back to English.
 The Polski / English buttons in Settings save an explicit choice in this
 application’s local storage. Switching language preserves the current game.
+The marriage values chosen in Settings are saved the same way.

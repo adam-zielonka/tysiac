@@ -21,16 +21,25 @@ Components use Svelte 5 in legacy syntax mode, with the `mount` API at startup.
 
 - `src/engine/rules.ts`, `Card.ts`, `Deal.ts` — the rules and a pure deal state
   machine (auction, musik, gifts, contract, tricks, scoring) without timers.
-  `Deal.viewFor(seat)` hides what that seat may not know.
+  `Deal.viewFor(seat)` hides what that seat may not know. Marriage values
+  come from the deal's meld system (`MARRIAGE_VALUES`): `classic` ♥ 100,
+  ♦ 80, ♣ 60, ♠ 40 or `german` ♣ 100, ♠ 80, ♥ 60, ♦ 40 (żołądź, wino,
+  serce, dzwonek). The suit order of `COLORS` is not the value order.
 - `src/engine/sampling.ts` — deals hidden cards consistently with a view
   (played cards, voids and excluded cards, marriage partners, gifts, musik,
   and the marriages proven by bids or contracts above 120).
 - `src/engine/Game.ts` — the match to 1000: seats, scores, the 800 lock, bot
-  timers and history. It is a Svelte store (`$game`).
+  timers, history and the meld system of the next deal. It is a Svelte store
+  (`$game`).
 - `src/engine/players/` — the bots, a bitmask play model shared by the
   searches, Monte Carlo helpers and alpha-beta.
 - `src/elements/` — the interface; `src/i18n.ts` — Polish source texts with
   English translations.
+- The meld system lives in `DealState.meldSystem` (fixed for a deal);
+  Settings call `Game.setMeldSystem` for the next deal through
+  `src/engine/settings.ts`, which saves it under `tysiac-meld-system`.
+  While a change waits, the rules describe the deal's own values
+  (`meldSystemInPlay` in `src/elements/ui.ts`).
 
 Fair bots receive only `deal.viewFor(seat)`; only Ada is marked `omniscient`
 and receives the full deal. Tests in `src/__tests__/` cover the rules,
