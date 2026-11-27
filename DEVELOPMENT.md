@@ -35,5 +35,6 @@ Components use Svelte 5 in legacy syntax mode, with the `mount` API at startup.
 Fair bots receive only `deal.viewFor(seat)`; only Ada is marked `omniscient`
 and receives the full deal. Tests in `src/__tests__/` cover the rules,
 sampling against a brute-force posterior and a replay of the public history,
-an independent referee over random deals, the match flow with fake timers and every bot in every phase. Bot
-timing tests measure CPU time, so they stay meaningful on a busy machine.
+an independent referee over random deals, the match flow with fake timers and
+every bot in every phase. Bot timing tests measure CPU time, so they stay
+meaningful on a busy machine.
