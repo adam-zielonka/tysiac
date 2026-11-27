@@ -166,15 +166,16 @@ export function inferred(
   trump: number,
 ): number {
   const suit = SUIT_OF[card]
-  if (suit !== led) {
-    let mask = SUIT_MASK[led]
-    if (trump >= 0 && trump !== led && suit !== trump) {
-      mask |=
-        SUIT_OF[winning] === trump ? strongerInSuit(FULL_MASK, winning) : SUIT_MASK[trump]
-    }
-    return mask
+  if (beatsIndex(card, winning, trump)) return suit === led ? 0 : SUIT_MASK[led]
+  if (suit === led) {
+    return SUIT_OF[winning] === led ? strongerInSuit(FULL_MASK, winning) : 0
   }
-  return SUIT_OF[winning] === led && card > winning
-    ? strongerInSuit(FULL_MASK, winning)
-    : 0
+  // Void without winning: no led suit and no trump that would have won
+  // (also after an under-trump, which is legal only without a higher trump).
+  let mask = SUIT_MASK[led]
+  if (trump >= 0) {
+    mask |=
+      SUIT_OF[winning] === trump ? strongerInSuit(FULL_MASK, winning) : SUIT_MASK[trump]
+  }
+  return mask
 }
