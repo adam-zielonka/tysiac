@@ -49,12 +49,6 @@
     game.prepare()
   }
 
-  function setPace(think: number, trick: number): void {
-    game.thinkDelay = think
-    game.trickDelay = trick
-    game.notify()
-  }
-
   onDestroy(() => game.stopTimer())
 </script>
 
@@ -136,7 +130,8 @@
           <button
             type="button"
             aria-pressed={$game.thinkDelay === pace.think}
-            on:click={() => setPace(pace.think, pace.trick)}>{$tr(pace.label)}</button
+            on:click={() => game.setPace(pace.think, pace.trick)}
+            >{$tr(pace.label)}</button
           >
         {/each}
       </div>
@@ -214,37 +209,47 @@
     </p>
     <p>
       <b>{$tr('02 · Licytacja')}</b>{$tr(
-        'Gracz po rozdającym musi otworzyć 100. Dalej każdy podbija o 10 albo pasuje — pas jest ostateczny. Powyżej 120 można licytować tylko z meldunkiem w ręce (limit: 120 + wartość meldunków). Wygrywa ostatni, który nie spasował.',
+        'Gracz po rozdającym musi otworzyć 100. Dalej każdy podbija o dowolną wielokrotność 10 (wolno skakać, np. ze 100 na 130) albo pasuje — pas jest ostateczny. Powyżej 120 można licytować tylko z meldunkiem w ręce (limit: 120 + wartość meldunków). Wygrywa ostatni, który nie spasował.',
       )}
     </p>
     <p>
       <b>{$tr('03 · Musik i kontrakt')}</b>{$tr(
-        'Musik zostaje odkryty. Rozgrywający bierze go, oddaje każdemu rywalowi po jednej zakrytej karcie i ustala kontrakt: co najmniej wylicytowaną wartość.',
+        'Musik zostaje odkryty dla wszystkich. Rozgrywający bierze go, oddaje każdemu rywalowi po jednej zakrytej karcie i ustala kontrakt: co najmniej wylicytowaną wartość, powyżej 120 tylko z meldunkiem.',
       )}
     </p>
     <p>
       <b>{$tr('04 · Lewy')}</b>{$tr(
-        'Osiem lew, pierwszą zaczyna rozgrywający. Trzeba dołożyć do koloru; bez koloru trzeba dać atut, jeśli jest; nie trzeba przebijać wyżej. Lewę bierze najwyższy atut, a bez niego najwyższa karta koloru wyjścia. Starszeństwo: A, 10, K, Q, J, 9.',
+        'Osiem lew; do pierwszej wychodzi rozgrywający, do kolejnych zwycięzca poprzedniej. Lewę bierze najwyższy atut, a bez atutu najwyższa karta koloru wyjścia. Starszeństwo: A, 10, K, Q, J, 9.',
       )}
     </p>
     <p>
-      <b>{$tr('05 · Meldunki')}</b>{$tr(
-        'Od drugiej lewy wyjście królem lub damą, gdy masz parę, to meldunek: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Kolor meldunku staje się atutem.',
+      <b>{$tr('05 · Dokładanie i przebijanie')}</b>{$tr(
+        'Trzeba dołożyć do koloru wyjścia i przebić kartę, która na razie bierze lewę, jeśli masz wyższą. Gdy lewa jest już przebita atutem, wystarczy dowolna karta koloru. Bez koloru trzeba przebić atutem: dowolnym, gdy w lewie nie ma atutu, a wyższym, gdy już jest. Jeśli atutem nie wygrasz lewy, dajesz dowolną kartę — nikt nie musi dokładać niższego atutu.',
       )}
     </p>
     <p>
-      <b>{$tr('06 · Punkty')}</b>{$tr(
+      <b>{$tr('06 · Meldunki')}</b>{$tr(
+        'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Kolor meldunku staje się atutem i zastępuje poprzedni.',
+      )}
+    </p>
+    <p>
+      <b>{$tr('07 · Punkty')}</b>{$tr(
         'Karty: A 11, 10 10, K 4, Q 3, J 2, 9 0 — razem 120. Rozgrywający dostaje +kontrakt, gdy karty i meldunki dadzą co najmniej tyle, inaczej −kontrakt. Obrońcy zapisują swoje punkty zaokrąglone do 10.',
       )}
     </p>
     <p>
-      <b>{$tr('07 · Koniec partii')}</b>{$tr(
-        'Po rozdaniu, w którym ktoś ma co najmniej 1000 punktów, wygrywa najwyższy wynik. Remis dzieli zwycięstwo.',
+      <b>{$tr('08 · Od 800 tylko jako grający')}</b>{$tr(
+        'Od 800 pkt punkty zdobywa się tylko jako grający. Obrońca, który przed rozdaniem ma co najmniej 800, nic nie zapisuje (w wynikach „0 · 800+”), a rozgrywający zawsze dostaje ±kontrakt. Kłódka przy wyniku gracza oznacza tę blokadę. Potocznie bywa to nazywane „beczką”.',
+      )}
+    </p>
+    <p>
+      <b>{$tr('09 · Koniec partii')}</b>{$tr(
+        'Partia kończy się po rozdaniu, w którym ktoś ma co najmniej 1000 pkt. Jeśli 1000 osiągnie rozgrywający, wygrywa on. W przeciwnym razie wygrywa najwyższy wynik, a remis dzieli zwycięstwo.',
       )}
     </p>
     <p class="rules-note">
       {$tr(
-        'Ta wersja pomija beczkę, bombę, ponowne rozdanie za cztery dziewiątki i grę we czterech.',
+        'Uproszczenia tej wersji: nie ma bomby (poddania rozdania), ponownego rozdania za cztery dziewiątki ani gry we czterech. Meldunku nie można zatrzymać — zgłasza się sam — a musik jest zawsze pokazywany wszystkim.',
       )}
     </p>
   </div>

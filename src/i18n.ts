@@ -62,6 +62,7 @@ const uiTranslations: Record<string, string> = {
   'rozgrywa za {value}': 'declarer, contract {value}',
   'lewy: {count}, punkty: {points}': 'tricks: {count}, points: {points}',
   'myśli…': 'thinking…',
+  '{score}+: punkty tylko jako grający': '{score}+: points only as the declarer',
   pas: 'pass',
   // Centre
   'Musik: 3 zakryte karty': 'Musik: 3 face-down cards',
@@ -78,6 +79,10 @@ const uiTranslations: Record<string, string> = {
   'Wychodzi: {name}': 'Lead: {name}',
   '{name} bierze lewę · +{points}': '{name} takes the trick · +{points}',
   'Bierzesz lewę · +{points}': 'You take the trick · +{points}',
+  '{name} bierze ostatnią lewę · +{points}': '{name} takes the last trick · +{points}',
+  'Bierzesz ostatnią lewę · +{points}': 'You take the last trick · +{points}',
+  '{names} · {score}+: punkty tylko jako grający':
+    '{names} · {score}+: points only as the declarer',
   'Lewa {number} z 8': 'Trick {number} of 8',
   'Meldunek {suit} +{value} · nowy atut': 'Marriage {suit} +{value} · new trump',
   'Rozdaje: {name}': 'Dealer: {name}',
@@ -104,6 +109,14 @@ const uiTranslations: Record<string, string> = {
   'Remis: {names}': 'Tie: {names}',
   'Partię wygrywa {name}': '{name} wins the match',
   'Następne rozdanie': 'Next deal',
+  '{score}+: obrońca z co najmniej {score} pkt nie zapisuje punktów.':
+    '{score}+: a defender with at least {score} points scores nothing.',
+  'Rozgrywający osiąga {target} i wygrywa partię.':
+    'The declarer reaches {target} and wins the match.',
+  'Rozgrywający, który osiąga {target}, wygrywa — nawet gdy obrońca ma tyle samo lub więcej ({names}).':
+    'The declarer who reaches {target} wins — even if a defender has as many points or more ({names}).',
+  'Rozgrywający nie osiągnął {target}, więc wygrywa najwyższy wynik.':
+    'The declarer did not reach {target}, so the highest total wins.',
   i: 'and',
   // Status line
   'Wybierz graczy i rozdaj karty.': 'Choose players and deal the cards.',
@@ -134,9 +147,24 @@ const uiTranslations: Record<string, string> = {
   'Bez meldunku kontrakt zostaje przy {value}.':
     'Without a marriage the contract stays at {value}.',
   'Wyjdź dowolną kartą': 'Lead any card',
-  'Dołóż do koloru {suit}': 'Follow suit {suit}',
-  'Brak koloru — przebij atutem {suit}': 'Out of suit — play a trump {suit}',
-  'Brak koloru i atutu — zagraj dowolną kartę': 'No suit or trump — play any card',
+  'Wyjdź dowolną kartą · K lub Q z pary to meldunek':
+    'Lead any card · a K or Q from a pair declares a marriage',
+  'Dołóż do koloru {suit} i przebij {card}': 'Follow suit {suit} and beat {card}',
+  'Dołóż do koloru {suit} · lewa jest już przebita atutem':
+    'Follow suit {suit} · the trick is already trumped',
+  'Dołóż do koloru {suit} · nie przebijesz {card}':
+    'Follow suit {suit} · you cannot beat {card}',
+  'Przebij atutem {trump} · nie masz koloru {suit}':
+    'Win with a trump {trump} · you have no {suit}',
+  'Przebij atutem wyższym niż {card} · nie masz koloru {suit}':
+    'Win with a trump higher than {card} · you have no {suit}',
+  'Dowolna karta · nie masz koloru {suit}, a atutu jeszcze nie ma':
+    'Any card · you have no {suit} and there is no trump yet',
+  'Dowolna karta · nie masz koloru {suit} ani atutu':
+    'Any card · you have neither {suit} nor a trump',
+  'Dowolna karta · nie masz atutu wyższego niż {card}':
+    'Any card · you have no trump higher than {card}',
+  'Za chwilę wynik rozdania…': 'The deal result follows in a moment…',
   Wynik: 'Result',
   Licytacja: 'Auction',
   'Lewa {number}/8': 'Trick {number}/8',
@@ -168,6 +196,9 @@ const uiTranslations: Record<string, string> = {
   ugrany: 'made',
   nieugrany: 'failed',
   'Jeszcze nie ma zapisanych rozdań.': 'No deals recorded yet.',
+  '{points} pkt bez zapisu — {lock}': '{points} pts not written — {lock}',
+  '0, zdobyte {points} pkt bez zapisu — {lock}':
+    '0, {points} pts taken but not written — {lock}',
   // Activity
   'Ostatnie ruchy': 'Recent moves',
   'Historia ruchów': 'Move history',
@@ -190,25 +221,31 @@ const uiTranslations: Record<string, string> = {
   'Trzech graczy, 24 karty od 9 do asa. Każdy dostaje 7 kart, a 3 zakryte tworzą musik. Rozdający zmienia się co rozdanie.':
     'Three players, 24 cards from nine to ace. Everyone gets 7 cards and 3 face-down cards form the musik (talon). The dealer moves on every deal.',
   '02 · Licytacja': '02 · Auction',
-  'Gracz po rozdającym musi otworzyć 100. Dalej każdy podbija o 10 albo pasuje — pas jest ostateczny. Powyżej 120 można licytować tylko z meldunkiem w ręce (limit: 120 + wartość meldunków). Wygrywa ostatni, który nie spasował.':
-    'The player after the dealer must open at 100. Then everyone raises by 10 or passes — a pass is final. Above 120 you may bid only with a marriage in hand (limit: 120 + the value of your marriages). The last player who has not passed wins.',
+  'Gracz po rozdającym musi otworzyć 100. Dalej każdy podbija o dowolną wielokrotność 10 (wolno skakać, np. ze 100 na 130) albo pasuje — pas jest ostateczny. Powyżej 120 można licytować tylko z meldunkiem w ręce (limit: 120 + wartość meldunków). Wygrywa ostatni, który nie spasował.':
+    'The player after the dealer must open at 100. Then everyone raises by any multiple of 10 (jumps are allowed, e.g. from 100 to 130) or passes — a pass is final. Above 120 you may bid only with a marriage in hand (limit: 120 + the value of your marriages). The last player who has not passed wins.',
   '03 · Musik i kontrakt': '03 · Musik and contract',
-  'Musik zostaje odkryty. Rozgrywający bierze go, oddaje każdemu rywalowi po jednej zakrytej karcie i ustala kontrakt: co najmniej wylicytowaną wartość.':
-    'The musik is turned face up. The declarer takes it, gives each opponent one card face down and sets the contract: at least the winning bid.',
+  'Musik zostaje odkryty dla wszystkich. Rozgrywający bierze go, oddaje każdemu rywalowi po jednej zakrytej karcie i ustala kontrakt: co najmniej wylicytowaną wartość, powyżej 120 tylko z meldunkiem.':
+    'The musik is turned face up for everyone. The declarer takes it, gives each opponent one card face down and sets the contract: at least the winning bid, above 120 only with a marriage.',
   '04 · Lewy': '04 · Tricks',
-  'Osiem lew, pierwszą zaczyna rozgrywający. Trzeba dołożyć do koloru; bez koloru trzeba dać atut, jeśli jest; nie trzeba przebijać wyżej. Lewę bierze najwyższy atut, a bez niego najwyższa karta koloru wyjścia. Starszeństwo: A, 10, K, Q, J, 9.':
-    'Eight tricks; the declarer leads the first. You must follow suit; if you cannot, you must play a trump when one is declared and you hold it; you never have to play higher. The highest trump wins the trick, otherwise the highest card of the suit led. Order: A, 10, K, Q, J, 9.',
-  '05 · Meldunki': '05 · Marriages',
-  'Od drugiej lewy wyjście królem lub damą, gdy masz parę, to meldunek: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Kolor meldunku staje się atutem.':
-    'From the second trick on, leading a king or queen while holding the pair declares a marriage: ♥ 100, ♦ 80, ♣ 60, ♠ 40. That suit becomes trump.',
-  '06 · Punkty': '06 · Points',
+  'Osiem lew; do pierwszej wychodzi rozgrywający, do kolejnych zwycięzca poprzedniej. Lewę bierze najwyższy atut, a bez atutu najwyższa karta koloru wyjścia. Starszeństwo: A, 10, K, Q, J, 9.':
+    'Eight tricks; the declarer leads the first, the winner of each trick leads the next. The highest trump wins the trick, otherwise the highest card of the suit led. Order: A, 10, K, Q, J, 9.',
+  '05 · Dokładanie i przebijanie': '05 · Following and overtaking',
+  'Trzeba dołożyć do koloru wyjścia i przebić kartę, która na razie bierze lewę, jeśli masz wyższą. Gdy lewa jest już przebita atutem, wystarczy dowolna karta koloru. Bez koloru trzeba przebić atutem: dowolnym, gdy w lewie nie ma atutu, a wyższym, gdy już jest. Jeśli atutem nie wygrasz lewy, dajesz dowolną kartę — nikt nie musi dokładać niższego atutu.':
+    'You must follow the suit led and beat the card currently winning the trick if you hold a higher one. Once the trick is trumped, any card of the suit will do. Without the suit you must win with a trump: any trump when none is in the trick, a higher one when there is. If no trump of yours can win the trick, play any card — nobody is forced to under-trump.',
+  '06 · Meldunki': '06 · Marriages',
+  'Gdy wychodzisz do dowolnej lewy — także pierwszej — królem lub damą i masz drugą kartę pary, meldunek zgłasza się sam: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Kolor meldunku staje się atutem i zastępuje poprzedni.':
+    'When you lead a king or queen to any trick — the first one included — while holding the other card of the pair, the marriage is declared automatically: ♥ 100, ♦ 80, ♣ 60, ♠ 40. Its suit becomes trump and replaces the previous one.',
+  '07 · Punkty': '07 · Points',
   'Karty: A 11, 10 10, K 4, Q 3, J 2, 9 0 — razem 120. Rozgrywający dostaje +kontrakt, gdy karty i meldunki dadzą co najmniej tyle, inaczej −kontrakt. Obrońcy zapisują swoje punkty zaokrąglone do 10.':
     'Cards: A 11, 10 10, K 4, Q 3, J 2, 9 0 — 120 in total. The declarer scores +contract when cards and marriages reach at least that much, otherwise −contract. Defenders score their own points rounded to the nearest 10.',
-  '07 · Koniec partii': '07 · End of the match',
-  'Po rozdaniu, w którym ktoś ma co najmniej 1000 punktów, wygrywa najwyższy wynik. Remis dzieli zwycięstwo.':
-    'After a deal in which someone reaches at least 1000 points, the highest total wins. A tie shares the victory.',
-  'Ta wersja pomija beczkę, bombę, ponowne rozdanie za cztery dziewiątki i grę we czterech.':
-    'This version leaves out the barrel, the bomb, redeals for four nines and the four-player game.',
+  '08 · Od 800 tylko jako grający': '08 · From 800 only as the declarer',
+  'Od 800 pkt punkty zdobywa się tylko jako grający. Obrońca, który przed rozdaniem ma co najmniej 800, nic nie zapisuje (w wynikach „0 · 800+”), a rozgrywający zawsze dostaje ±kontrakt. Kłódka przy wyniku gracza oznacza tę blokadę. Potocznie bywa to nazywane „beczką”.':
+    'From 800 points on, you score only as the declarer. A defender who has at least 800 before the deal writes nothing (shown as “0 · 800+”), while the declarer always scores ± the contract. A padlock next to a player’s score marks this lock. Players sometimes casually call it the “barrel” (beczka).',
+  '09 · Koniec partii': '09 · End of the match',
+  'Partia kończy się po rozdaniu, w którym ktoś ma co najmniej 1000 pkt. Jeśli 1000 osiągnie rozgrywający, wygrywa on. W przeciwnym razie wygrywa najwyższy wynik, a remis dzieli zwycięstwo.':
+    'The match ends after a deal in which someone has at least 1000 points. If the declarer reaches 1000, the declarer wins. Otherwise the highest total wins, and a tie shares the victory.',
+  'Uproszczenia tej wersji: nie ma bomby (poddania rozdania), ponownego rozdania za cztery dziewiątki ani gry we czterech. Meldunku nie można zatrzymać — zgłasza się sam — a musik jest zawsze pokazywany wszystkim.':
+    'Simplifications in this version: there is no bomb (conceding the deal), no redeal for four nines and no four-player game. A marriage cannot be withheld — it is declared automatically — and the musik is always shown to everyone.',
 }
 
 const translations: Record<string, string> = {

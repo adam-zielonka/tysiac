@@ -2,6 +2,7 @@
   import { tr as tx } from '../i18n'
   import { store } from '../engine/Store'
   import { strategies } from '../engine/strategies'
+  import LockIcon from './LockIcon.svelte'
   import { formatNumber, signed } from './ui'
 
   const { game } = store
@@ -9,6 +10,10 @@
   $: nameOf = (seat: number) => $tx(strategies[$game.playersSelect[seat]].name)
   $: best = Math.max(...$game.scores)
   $: started = $game.status !== 'setup'
+  /** Seats that currently score only as the declarer (moot after the match). */
+  $: lockedNow =
+    started && $game.status !== 'gameOver' ? $game.lockedSeats : [false, false, false]
+  $: lockLabel = $tx('{score}+: punkty tylko jako grający', { score: $game.lockScore })
 </script>
 
 <details class="panel score-panel">
@@ -16,9 +21,10 @@
     <span>{$tx('Tabela wyników')}</span>
     {#if started}
       <span class="summary-totals"
-        >{[0, 1, 2]
-          .map(seat => `${nameOf(seat)} ${formatNumber($game.scores[seat])}`)
-          .join(' · ')}</span
+        >{#each [0, 1, 2] as seat}{seat ? ' · ' : ''}{nameOf(seat)}
+          {formatNumber($game.scores[seat])}{#if lockedNow[seat]}<LockIcon
+              label={lockLabel}
+            />{/if}{/each}</span
       >
     {/if}
   </summary>
@@ -47,12 +53,29 @@
             </td>
             {#each [0, 1, 2] as seat}
               <td>
-                <span
-                  class="delta"
-                  class:negative={record.deltas[seat] < 0}
-                  class:declarer={seat === record.declarer}
-                  >{signed(record.deltas[seat])}</span
-                >
+                {#if record.locked?.[seat]}
+                  <span
+                    class="delta locked"
+                    title={$tx('{points} pkt bez zapisu — {lock}', {
+                      points: record.points[seat],
+                      lock: lockLabel,
+                    })}
+                    ><span aria-hidden="true">0 · <LockIcon />{$game.lockScore}+</span
+                    ><span class="visually-hidden"
+                      >{$tx('0, zdobyte {points} pkt bez zapisu — {lock}', {
+                        points: record.points[seat],
+                        lock: lockLabel,
+                      })}</span
+                    ></span
+                  >
+                {:else}
+                  <span
+                    class="delta"
+                    class:negative={record.deltas[seat] < 0}
+                    class:declarer={seat === record.declarer}
+                    >{signed(record.deltas[seat])}</span
+                  >
+                {/if}
                 <span class="running">{formatNumber(record.totals[seat])}</span>
               </td>
             {/each}
@@ -68,7 +91,8 @@
           <th scope="row" colspan="2">{$tx('Razem')}</th>
           {#each [0, 1, 2] as seat}
             <td class="total" class:leader={started && $game.scores[seat] === best}
-              >{formatNumber($game.scores[seat])}</td
+              >{#if lockedNow[seat]}<LockIcon label={lockLabel} />
+              {/if}{formatNumber($game.scores[seat])}</td
             >
           {/each}
         </tr>
@@ -203,6 +227,18 @@
   }
   .delta.declarer {
     font-weight: 700;
+  }
+  .delta.locked,
+  .total :global(.lock-icon),
+  .summary-totals :global(.lock-icon) {
+    color: #f1dc8e;
+  }
+  .summary-totals :global(.lock-icon) {
+    margin-left: 2px;
+  }
+  .delta.locked :global(.lock-icon),
+  .total :global(.lock-icon) {
+    margin-right: 2px;
   }
   .running {
     color: #e2eadb;

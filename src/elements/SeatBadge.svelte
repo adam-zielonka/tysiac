@@ -4,6 +4,7 @@
   import { PlayerType } from '../engine/PlayerType'
   import { strategies } from '../engine/strategies'
   import PlayerAvatar from './PlayerAvatar.svelte'
+  import LockIcon from './LockIcon.svelte'
   import { bidText, formatNumber, seatSide } from './ui'
 
   const { game } = store
@@ -30,10 +31,14 @@
   $: knowledge = isSetup && type === PlayerType.AZ
   $: bubble = knowledge ? $tr('Znam wszystkie ręce') : bid
   $: score = $game.scores[seat]
+  /** At 800+ a player scores only as the declarer (moot once the match is over). */
+  $: locked = !isSetup && $game.status !== 'gameOver' && $game.lockedSeats[seat]
+  $: lockLabel = $tr('{score}+: punkty tylko jako grający', { score: $game.lockScore })
   $: hasMeta = isDealer || isDeclarer || showTricks
   $: description = [
     name,
     $tr('{score} pkt', { score: formatNumber(score) }),
+    locked ? lockLabel : '',
     isDealer ? $tr('rozdaje') : '',
     isDeclarer ? $tr('rozgrywa za {value}', { value: deal!.contract }) : '',
     showTricks ? $tr('lewy: {count}, punkty: {points}', { count: tricks, points }) : '',
@@ -98,8 +103,13 @@
           >{/if}
       </span>
     {/if}
-    <span class="score" class:placeholder={isSetup} aria-hidden="true"
-      >{formatNumber(score)}</span
+    <span
+      class="score"
+      class:placeholder={isSetup}
+      class:locked
+      title={locked ? lockLabel : undefined}
+      aria-hidden="true"
+      >{#if locked}<LockIcon />{/if}{formatNumber(score)}</span
     >
   </button>
 </div>
@@ -221,6 +231,16 @@
     text-align: right;
     border-left: 1px solid #8fad9844;
     padding-left: 9px;
+  }
+  .score.locked {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: #f1dc8e;
+  }
+  .score.locked :global(.lock-icon) {
+    width: 11px;
+    height: 13px;
   }
   .placeholder {
     visibility: hidden;
