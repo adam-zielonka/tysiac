@@ -110,9 +110,14 @@ export class Game extends SubscribableStore {
     return this.scores.map(score => score >= this.lockScore)
   }
 
+  /**
+   * Sets the bot thinking delay and how long a completed trick stays on the
+   * table (milliseconds; invalid values are ignored). A pending move or pause
+   * keeps its delay; the new pace applies from the next one.
+   */
   setPace(thinkDelay: number, trickDelay: number): void {
-    this.thinkDelay = thinkDelay
-    this.trickDelay = trickDelay
+    if (Number.isFinite(thinkDelay) && thinkDelay >= 0) this.thinkDelay = thinkDelay
+    if (Number.isFinite(trickDelay) && trickDelay >= 0) this.trickDelay = trickDelay
     this.notify()
   }
 
@@ -127,7 +132,7 @@ export class Game extends SubscribableStore {
   }
 
   startMatch(): void {
-    this.stopTimer()
+    this.clearTimer()
     this.scores = [0, 0, 0]
     this.records = []
     this.history = []
@@ -139,7 +144,7 @@ export class Game extends SubscribableStore {
 
   /** Abandons the match and returns to choosing players. */
   prepare(): void {
-    this.stopTimer()
+    this.clearTimer()
     this.status = 'setup'
     this.deal = null
     this.scores = [0, 0, 0]
@@ -169,8 +174,20 @@ export class Game extends SubscribableStore {
     return this.perform(action)
   }
 
-  /** Stops pending bot moves (used by tests and when leaving the page). */
+  /**
+   * Stops pending bot moves (used by tests and when leaving the page). The
+   * pause that shows the final trick of a deal ends at once: nothing else
+   * would end it.
+   */
   stopTimer(): void {
+    this.clearTimer()
+    if (this.showLastTrick && this.status !== 'playing') {
+      this.showLastTrick = false
+      this.notify()
+    }
+  }
+
+  private clearTimer(): void {
     if (this.timeout !== undefined) clearTimeout(this.timeout)
     this.timeout = undefined
   }
@@ -180,7 +197,7 @@ export class Game extends SubscribableStore {
   }
 
   private startDeal(dealer: number): void {
-    this.stopTimer()
+    this.clearTimer()
     this.dealNumber++
     this.deal = Deal.deal(dealer, Deck.shuffle(Deck.generate(), this.random))
     this.status = 'playing'
@@ -194,14 +211,14 @@ export class Game extends SubscribableStore {
   private perform(action: Action): boolean {
     const deal = this.deal
     if (!deal || !deal.isLegal(action)) return false
-    this.stopTimer()
+    this.clearTimer()
     this.showLastTrick = false
     const events = deal.apply(action)
     events.forEach(event => this.record(event))
     const result = deal.result()
     if (result) {
-      // finishDeal starts the timer that hides the final trick; nothing else
-      // is scheduled until the next deal.
+      // finishDeal starts the only timer left: the pause that hides the final
+      // trick. Nothing else is scheduled until the next deal.
       this.finishDeal(result)
       this.notify()
       return true
@@ -213,7 +230,7 @@ export class Game extends SubscribableStore {
   }
 
   private schedule(): void {
-    this.stopTimer()
+    this.clearTimer()
     const deal = this.deal
     if (this.status !== 'playing' || !deal) return
     const seat = deal.turn
@@ -222,6 +239,7 @@ export class Game extends SubscribableStore {
     if (player.isHuman) {
       if (this.showLastTrick) {
         this.timeout = setTimeout(() => {
+          this.timeout = undefined
           this.showLastTrick = false
           this.notify()
         }, this.trickDelay)
@@ -293,7 +311,8 @@ export class Game extends SubscribableStore {
     } else {
       this.status = 'dealEnd'
     }
-    // Keep the final trick on the table for a moment before the summary.
+    // Keep the final trick on the table for a moment before the summary
+    // (status is already final, so nextDeal or prepare may cut it short).
     this.showLastTrick = true
     this.timeout = setTimeout(() => {
       this.timeout = undefined

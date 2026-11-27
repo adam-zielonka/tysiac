@@ -7,7 +7,9 @@ import {
   Figure,
   card,
   cardById,
+  cardIndex,
   cards,
+  suitMask,
 } from '../../engine/Card'
 import { Deck } from '../../engine/Deck'
 import { TOTAL_CARD_POINTS, cardPoints } from '../../engine/rules'
@@ -24,6 +26,28 @@ describe('Card', () => {
     expect(cardById('7♥')).toBeUndefined()
     expect(Deck.generate()).toEqual([...ALL_CARDS])
     expect(Deck.generate()).not.toBe(ALL_CARDS)
+  })
+
+  it('numbers the cards by their position in the deck, also for equal objects', () => {
+    ALL_CARDS.forEach((value, i) => {
+      expect(cardIndex(value)).toBe(i)
+      expect(cardIndex(new Card(value.figure, value.color))).toBe(i)
+    })
+    expect(cardIndex(card(Figure.A, Color.Kier))).toBe(0)
+    expect(cardIndex(card(Figure.f9, Color.Pik))).toBe(23)
+  })
+
+  it('builds suit masks, optionally above a rank', () => {
+    const idsOf = (mask: number) =>
+      ids(ALL_CARDS.filter(value => mask & (1 << cardIndex(value))))
+    expect(idsOf(suitMask(Color.Kier))).toBe('A♥ 10♥ K♥ Q♥ J♥ 9♥')
+    expect(idsOf(suitMask(Color.Pik))).toBe('A♠ 10♠ K♠ Q♠ J♠ 9♠')
+    expect(idsOf(suitMask(Color.Karo, card(Figure.K, Color.Karo).rank))).toBe('A♦ 10♦')
+    expect(idsOf(suitMask(Color.Trefl, card(Figure.f9, Color.Trefl).rank))).toBe(
+      'A♣ 10♣ K♣ Q♣ J♣',
+    )
+    expect(suitMask(Color.Trefl, card(Figure.A, Color.Trefl).rank)).toBe(0)
+    expect(COLORS.reduce((mask, color) => mask | suitMask(color), 0)).toBe(0xffffff)
   })
 
   it('lists suits in marriage order and figures from the strongest', () => {

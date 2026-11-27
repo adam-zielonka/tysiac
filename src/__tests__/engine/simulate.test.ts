@@ -1,11 +1,17 @@
-import { Figure, type Card, type Color } from '../../engine/Card'
+import { ALL_CARDS, Figure, type Card, type Color } from '../../engine/Card'
 import { Deal, actionKey, type Action } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import { Player } from '../../engine/Player'
 import { PlayerType } from '../../engine/PlayerType'
 import { pick, seededRandom, type Random } from '../../engine/random'
 import { runDeal } from '../../engine/simulate'
-import { ChaosPlayer, chaosPlayers, expectComplete, greedyPlayers } from './helpers'
+import {
+  ChaosPlayer,
+  chaosPlayers,
+  expectComplete,
+  greedyPlayers,
+  maskIds,
+} from './helpers'
 
 /*
  * An independent referee: the rules of this version written again from the
@@ -27,6 +33,41 @@ const limitFor = (hand: readonly Card[]) =>
 const range = (from: number, to: number) =>
   Array.from({ length: Math.max(0, (to - from) / 10 + 1) }, (_, i) => from + i * 10)
 
+type RefPlay = { player: number; card: Card }
+
+/** The play holding the trick: the highest trump, else the highest card of the led suit. */
+function holding(trick: readonly RefPlay[], trump: Color | null): RefPlay {
+  const led = trick[0].card.color
+  const contenders = trick.some(p => p.card.color === trump)
+    ? trick.filter(p => p.card.color === trump)
+    : trick.filter(p => p.card.color === led)
+  return contenders.reduce((best, p) =>
+    STRENGTH.indexOf(p.card.figure) > STRENGTH.indexOf(best.card.figure) ? p : best,
+  )
+}
+
+/**
+ * Polish rules stated as "win the trick if you can within what you must play":
+ * the led suit when held (else any card), restricted to the cards that would
+ * take the trick whenever there is one. That covers beating the winner in the
+ * led suit, any led card once the trick is trumped, trumping with a winning
+ * trump when void, and a free choice when no card can win.
+ */
+function refereeLegal(
+  hand: readonly Card[],
+  trick: readonly RefPlay[],
+  trump: Color | null,
+): Card[] {
+  if (!trick.length) return [...hand]
+  const led = trick[0].card.color
+  const follow = hand.filter(c => c.color === led)
+  const pool = follow.length ? follow : [...hand]
+  const takes = pool.filter(
+    c => holding([...trick, { player: -1, card: c }], trump).player === -1,
+  )
+  return takes.length ? takes : pool
+}
+
 class Referee {
   turn: number
   passed = [false, false, false]
@@ -35,11 +76,15 @@ class Referee {
   phase = 'bidding'
   gifts: number[] = []
   trump: Color | null = null
-  trick: { player: number; card: Card }[] = []
+  trick: RefPlay[] = []
   trickNumber = 0
   taken = [0, 0, 0]
   melds = [0, 0, 0]
   contract = 0
+  /** Card ids each player provably lacks: cards that would have made one of its plays illegal. */
+  excluded: Set<string>[] = [new Set(), new Set(), new Set()]
+  /** How often the overtaking rule narrowed or widened a choice (coverage). */
+  stats = { mustBeat: 0, trumpedFollow: 0, mustOvertrump: 0, freeWithTrumps: 0 }
 
   constructor(readonly dealer: number) {
     this.turn = (dealer + 2) % 3
@@ -63,17 +108,28 @@ class Referee {
           v => `contract:${v}`,
         )
       case 'play': {
-        let legal = [...hand]
-        if (this.trick.length) {
-          const led = this.trick[0].card.color
-          const follow = hand.filter(c => c.color === led)
-          const trumps = hand.filter(c => c.color === this.trump)
-          legal = follow.length ? follow : trumps.length ? trumps : legal
-        }
+        const legal = refereeLegal(hand, this.trick, this.trump)
+        this.count(hand, legal)
         return legal.map(c => `play:${c.id}`)
       }
     }
     return []
+  }
+
+  private count(hand: readonly Card[], legal: readonly Card[]): void {
+    if (!this.trick.length) return
+    const led = this.trick[0].card.color
+    const top = holding(this.trick, this.trump).card
+    const follow = hand.filter(c => c.color === led)
+    const trumps = hand.filter(c => c.color === this.trump)
+    if (follow.length) {
+      if (legal.length < follow.length) this.stats.mustBeat++
+      else if (top.color !== led && follow.length > 1) this.stats.trumpedFollow++
+    } else if (trumps.length && top.color === this.trump) {
+      // Void with trumps after someone trumped: over-trump if possible, else free.
+      if (legal.every(c => c.color === this.trump)) this.stats.mustOvertrump++
+      else this.stats.freeWithTrumps++
+    }
   }
 
   /** Mirrors the action on the referee state (called before the engine applies it). */
@@ -113,33 +169,52 @@ class Referee {
       case 'play': {
         const hand = deal.hand(player)
         const card = action.card
-        if (
-          !this.trick.length &&
-          this.trickNumber > 0 &&
-          (card.figure === Figure.K || card.figure === Figure.Q) &&
-          has(hand, card.figure === Figure.K ? Figure.Q : Figure.K, card.color)
-        ) {
+        if (this.isMeld(hand, card)) {
           this.melds[player] += VALUE[card.color]
           this.trump = card.color
+        }
+        // Any card that, added to the hand, would forbid this play is not held.
+        if (this.trick.length) {
+          for (const other of ALL_CARDS) {
+            if (hand.some(c => c.id === other.id)) continue
+            const legal = refereeLegal([...hand, other], this.trick, this.trump)
+            if (!legal.some(c => c.id === card.id)) this.excluded[player].add(other.id)
+          }
         }
         this.trick.push({ player, card })
         if (this.trick.length < 3) {
           this.turn = (player + 1) % 3
           return
         }
-        const led = this.trick[0].card.color
-        const contenders = this.trick.some(p => p.card.color === this.trump)
-          ? this.trick.filter(p => p.card.color === this.trump)
-          : this.trick.filter(p => p.card.color === led)
-        const winner = contenders.reduce((best, p) =>
-          STRENGTH.indexOf(p.card.figure) > STRENGTH.indexOf(best.card.figure) ? p : best,
-        ).player
+        const winner = holding(this.trick, this.trump).player
         this.taken[winner] += points(this.trick.map(p => p.card))
         this.trick = []
         this.trickNumber++
         this.turn = winner
         if (this.trickNumber === 8) this.phase = 'finished'
       }
+    }
+  }
+
+  /** Leading K or Q with the partner in hand declares, in any trick. */
+  isMeld(hand: readonly Card[], card: Card): boolean {
+    return (
+      !this.trick.length &&
+      (card.figure === Figure.K || card.figure === Figure.Q) &&
+      has(hand, card.figure === Figure.K ? Figure.Q : Figure.K, card.color)
+    )
+  }
+
+  /** The excluded cards in deck order, and the suits they cover completely. */
+  inference(player: number): { excluded: string; voids: boolean[] } {
+    const set = this.excluded[player]
+    return {
+      excluded: ALL_CARDS.filter(c => set.has(c.id))
+        .map(c => c.id)
+        .join(' '),
+      voids: [1, 2, 3, 4].map(color =>
+        ALL_CARDS.filter(c => c.color === color).every(c => set.has(c.id)),
+      ),
     }
   }
 
@@ -156,21 +231,50 @@ function refereedDeal(
   dealer: number,
   random: Random,
   pickAction: (deal: Deal) => Action,
+  referee = new Referee(dealer),
 ) {
   const deal = Deal.deal(dealer, Deck.shuffle(Deck.generate(), random))
-  const referee = new Referee(dealer)
   while (!deal.isFinished) {
-    expect(deal.turn).toBe(referee.turn)
-    expect(deal.phase).toBe(referee.phase)
+    if (deal.turn !== referee.turn || deal.phase !== referee.phase) {
+      throw new Error(`Turn or phase differs: ${deal.turn} ${deal.phase}`)
+    }
     const legal = deal.legalActions().map(actionKey)
     const expected = referee.expected(deal)
     if (legal.join() !== expected.join()) {
       throw new Error(`Legal actions differ: ${legal.join()} vs ${expected.join()}`)
     }
+    if (deal.phase === 'play') {
+      const hand = deal.hand(deal.turn)
+      for (const card of deal.playableCards()) {
+        if (deal.isMeld(card) !== referee.isMeld(hand, card)) {
+          throw new Error(`Marriage of ${card.id} differs in trick ${deal.trickNumber}`)
+        }
+      }
+    }
     const action = pickAction(deal)
+    const player = deal.turn
     referee.apply(deal, action)
     deal.apply(action)
-    expect(deal.trump).toBe(referee.trump)
+    if (deal.trump !== referee.trump) throw new Error('Trump differs')
+    // Only the player who followed can have revealed something.
+    if (action.type === 'play') {
+      // Sound: a player never holds a card it was shown to lack.
+      if (deal.hand(player).some(c => referee.excluded[player].has(c.id))) {
+        throw new Error(`Seat ${player} holds a card it was shown to lack`)
+      }
+      const inferred = referee.inference(player)
+      const excluded = maskIds(deal.s.excluded[player])
+      const voids = deal.s.voids[player].slice(1)
+      if (excluded !== inferred.excluded || voids.join() !== inferred.voids.join()) {
+        throw new Error(
+          `Inference for seat ${player} differs: ${excluded} (${voids}) vs ` +
+            `${inferred.excluded} (${inferred.voids})`,
+        )
+      }
+    }
+  }
+  for (const player of [0, 1, 2]) {
+    expect(maskIds(deal.s.excluded[player])).toBe(referee.inference(player).excluded)
   }
   expect(referee.phase).toBe('finished')
   const result = deal.result()!
@@ -208,27 +312,57 @@ describe('simulate', () => {
   it('agrees with an independent referee over thousands of random deals', () => {
     const random = seededRandom(1000)
     const declarers = [0, 0, 0]
+    const stats = { mustBeat: 0, trumpedFollow: 0, mustOvertrump: 0, freeWithTrumps: 0 }
     let melds = 0
+    let firstTrickMelds = 0
+    let partial = 0
     let made = 0
     let maxContract = 0
     for (let n = 0; n < 2400; n++) {
       const bidHappy = n % 2 === 0
-      const deal = refereedDeal(n % 3, random, current => {
-        const actions = current.legalActions()
-        if (current.phase === 'bidding' && random() < (bidHappy ? 0.3 : 0.7)) {
-          return actions[0]
-        }
-        return pick(random, actions)
-      })
+      // Half of the deals declare every marriage they can, so trumps are common.
+      const melder = n % 4 < 2
+      const referee = new Referee(n % 3)
+      const deal = refereedDeal(
+        n % 3,
+        random,
+        current => {
+          const actions = current.legalActions()
+          if (current.phase === 'bidding' && random() < (bidHappy ? 0.3 : 0.7)) {
+            return actions[0]
+          }
+          const meld = actions.find(a => a.type === 'play' && current.isMeld(a.card))
+          if (melder && meld && random() < 0.8) return meld
+          return pick(random, actions)
+        },
+        referee,
+      )
       const result = deal.result()!
       declarers[result.declarer]++
       melds += deal.s.melds.length
+      firstTrickMelds += deal.s.melds.filter(meld => meld.trick === 0).length
+      // Exclusions that are not whole suits come from the overtaking rule.
+      for (const set of referee.excluded) {
+        for (const color of [1, 2, 3, 4]) {
+          const count = ALL_CARDS.filter(c => c.color === color && set.has(c.id)).length
+          if (count > 0 && count < 6) partial++
+        }
+      }
+      ;(Object.keys(stats) as (keyof typeof stats)[]).forEach(
+        key => (stats[key] += referee.stats[key]),
+      )
       if (result.made) made++
       maxContract = Math.max(maxContract, result.contract)
     }
     // The random series covers the interesting cases.
     expect(Math.min(...declarers)).toBeGreaterThan(500)
     expect(melds).toBeGreaterThan(500)
+    expect(firstTrickMelds).toBeGreaterThan(100)
+    expect(partial).toBeGreaterThan(1000)
+    expect(stats.mustBeat).toBeGreaterThan(2000)
+    expect(stats.trumpedFollow).toBeGreaterThan(100)
+    expect(stats.mustOvertrump).toBeGreaterThan(10)
+    expect(stats.freeWithTrumps).toBeGreaterThan(10)
     expect(made).toBeGreaterThan(50)
     expect(maxContract).toBeGreaterThan(200)
   }, 60_000)
@@ -288,7 +422,8 @@ describe('simulate', () => {
         expect(result.cardPoints.reduce((a, b) => a + b, 0)).toBe(120)
         result.deltas.forEach((delta, seat) => {
           expect(Math.abs(delta) % 10).toBe(0)
-          scores[seat] += delta
+          // The 800 lock of the match: defenders at 800+ score nothing.
+          if (seat === result.declarer || scores[seat] < 800) scores[seat] += delta
         })
         dealer = (dealer + 1) % 3
         deals++

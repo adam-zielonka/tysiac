@@ -1,9 +1,17 @@
-import { ALL_CARDS, COLORS, Color, type Card, cardById, cards } from '../../engine/Card'
+import {
+  ALL_CARDS,
+  COLORS,
+  Color,
+  type Card,
+  cardById,
+  cardIndex,
+  cards,
+} from '../../engine/Card'
 import { Deal, actionKey } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import { pick, seededRandom, type Random } from '../../engine/random'
 import { sampleDeal, thirdSeat } from '../../engine/sampling'
-import { collectCards, dealWith, expectComplete, run } from './helpers'
+import { collectCards, dealWith, expectComplete, maskIds, run } from './helpers'
 
 /** Cards `seat` may legitimately know in the real deal. */
 function knownTo(deal: Deal, seat: number): Set<Card> {
@@ -32,14 +40,26 @@ function check(condition: boolean, message: () => string): void {
 
 const key = (list: readonly { id: string }[]) => list.map(card => card.id).join(' ')
 
-/** The real deal never contradicts the public void inference. */
-function expectVoidsSound(deal: Deal): void {
-  deal.s.voids.forEach((row, player) => {
-    for (const color of COLORS) {
+/** Does the public inference say that `player` does not hold `card`? */
+function lacks(deal: Deal, player: number, card: Card): boolean {
+  return (deal.s.excluded[player] & (1 << cardIndex(card))) !== 0
+}
+
+/** Public inference in `deal` (voids and excluded cards) against its hands. */
+function checkInference(deal: Deal, where: () => string): void {
+  deal.s.hands.forEach((hand, player) => {
+    for (const card of hand) {
       check(
-        !row[color] || !deal.s.hands[player].some(c => c.color === color),
-        () => `Seat ${player} is marked void in ${color} but holds it`,
+        !lacks(deal, player, card) && !deal.s.voids[player][card.color],
+        () => `Seat ${player} holds ${card.id} it was shown to lack (${where()})`,
       )
+    }
+    // Voids are exactly the suits excluded as a whole.
+    for (const color of COLORS) {
+      const whole = ALL_CARDS.filter(c => c.color === color).every(c =>
+        lacks(deal, player, c),
+      )
+      check(whole === deal.s.voids[player][color], () => `void flags (${where()})`)
     }
   })
 }
@@ -55,6 +75,9 @@ function checkView(deal: Deal, seat: number): Deal {
     () => 'hidden counts',
   )
   check(deal.isMusikRevealed || view.s.musik.length === 0, () => 'musik shown early')
+  // The inference from the play is public: every view has all of it.
+  check(view.s.excluded.join() === deal.s.excluded.join(), () => 'excluded cards')
+  check(JSON.stringify(view.s.voids) === JSON.stringify(deal.s.voids), () => 'voids')
   return view
 }
 
@@ -78,15 +101,8 @@ function checkSample(deal: Deal, seat: number, random: Random): Deal {
   )
   check(deal.phase !== 'musik' || key(s.musik) === key(deal.s.musik), () => 'musik')
   check(key(s.hands[seat]) === key(deal.s.hands[seat]), () => `own hand for ${where}`)
-  // Voids, known marriage partners and gifts are respected.
-  s.voids.forEach((row, player) => {
-    for (const color of COLORS) {
-      check(
-        !row[color] || !s.hands[player].some(c => c.color === color),
-        () => `Sample gives seat ${player} a card of void suit ${color} (${where})`,
-      )
-    }
-  })
+  // Voids, excluded cards, known marriage partners and gifts are respected.
+  checkInference(sample, () => `sample for ${where}`)
   for (const [id, holder] of Object.entries(s.knownHolders)) {
     check(s.hands[holder].includes(cardById(id)!), () => `known holder of ${id}`)
   }
@@ -133,7 +149,8 @@ const nextOf = (seat: number) => (seat + 1) % 3
 
 /**
  * P(card is with the declarer) for every unknown card of a defender view in
- * play, by enumerating all splits: the other defender's gift is uniform over
+ * play, by enumerating all splits that respect the public inference (cards a
+ * player was shown to lack, voids included): the other defender's gift is uniform over
  * the nine cards the viewer did not get (so each musik card has prior 1/9,
  * and a musik card the declarer played was not it), and the remaining unknown
  * cards are split uniformly. `null` when the view does not
@@ -163,8 +180,8 @@ function exactPosterior(view: Deal): Map<Card, number> | null {
     const mine = unknown.filter((_, i) => mask & (1 << i))
     if (mine.length !== room) continue
     const theirs = unknown.filter(card => !mine.includes(card))
-    if (mine.some(card => s.voids[declarer][card.color])) continue
-    if (theirs.some(card => s.voids[other][card.color])) continue
+    if (mine.some(card => lacks(view, declarer, card))) continue
+    if (theirs.some(card => lacks(view, other, card))) continue
     const given = hidden.filter(card => theirs.includes(card))
     if (given.length > 1) continue
     // The gift is uniform over the declarer's ten cards minus the viewer's own.
@@ -215,7 +232,7 @@ describe('sampleDeal', () => {
     for (let n = 0; n < 200; n++) {
       const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
       for (;;) {
-        expectVoidsSound(deal)
+        checkInference(deal, () => `real deal in ${deal.phase}`)
         for (const seat of [0, 1, 2]) {
           const sample = checkSample(deal, seat, random)
           samples++
@@ -415,9 +432,10 @@ describe('sampleDeal', () => {
       'K♥ Q♣ K♠',
     )
     run(deal, 'pass, pass, take, gQ♠>1, gK♥>0, c100')
-    run(deal, 'K♠, J♥, A♠, J♣, K♣, A♣, 10♦, 9♦, 10♥, K♦, Q♦, Q♣')
-    run(deal, 'J♦, A♦, 10♠, 9♣, J♠, 10♣, 9♥, Q♥, A♥')
+    run(deal, 'K♠, J♥, A♠, J♣, K♣, A♣, 10♦, A♦, 10♥, Q♦, 10♠, K♦')
+    run(deal, 'J♦, 9♦, J♠, 10♣, 9♣, Q♣, 9♥, Q♥, A♥')
     expect(deal.trickNumber).toBe(7)
+    expect(deal.s.voids[0][Color.Pik]).toBe(true)
     const view = deal.viewFor(1)
     const random = seededRandom(24)
     for (let i = 0; i < 1000; i++) {
@@ -428,10 +446,73 @@ describe('sampleDeal', () => {
     }
   })
 
+  describe('cards excluded by the overtaking rule', () => {
+    /**
+     * Dealer 2: seat 0 declares, takes 10♣ 9♦ 10♦, gives 9♦ to seat 1 and 10♦
+     * to seat 2, then leads Q♠ (♠ marriage).
+     */
+    function overtakingDeal(): Deal {
+      const deal = dealWith(
+        2,
+        ['Q♠ K♠ Q♥ 9♣ J♦ K♣ Q♣', '9♠ A♥ 10♥ K♥ J♥ A♦ K♦', 'A♠ 10♠ J♠ 9♥ A♣ J♣ Q♦'],
+        '10♣ 9♦ 10♦',
+      )
+      run(deal, 'pass, pass, take, g9♦>1, g10♦>2, c150')
+      return deal
+    }
+
+    it('keeps a higher card of the suit away from a player who followed below the winner', () => {
+      const deal = overtakingDeal()
+      // Seat 1 follows Q♠ with 9♠: it has no A♠, 10♠ or K♠, so the unseen 10♠
+      // is with seat 2 (which beat the queen with A♠).
+      run(deal, 'Q♠, 9♠, A♠')
+      expect(maskIds(deal.s.excluded[1])).toBe('A♠ 10♠ K♠')
+      const view = deal.viewFor(0)
+      const random = seededRandom(27)
+      let jackWithOne = 0
+      const runs = 2000
+      for (let i = 0; i < runs; i++) {
+        const sample = sampleDeal(view, random)
+        expect(sample.hand(2)).toContain(cards('10♠')[0])
+        if (sample.hand(1).includes(cards('J♠')[0])) jackWithOne++
+      }
+      // J♠ is unconstrained: seat 1 has six of the eleven places left for the
+      // free cards (it holds the known 9♦; seat 2 the known 10♦ and 10♠).
+      expect(Math.abs(jackWithOne / runs - 6 / 11)).toBeLessThan(0.04)
+    })
+
+    it('moves a musik card to the other defender when the declarer provably lacks it', () => {
+      const deal = overtakingDeal()
+      run(deal, 'Q♠, 9♠, A♠, 9♥, Q♥, K♥, J♥, 10♠, 9♣, Q♦, J♦')
+      // The declarer followed Q♦ with J♦: it has no A♦, 10♦ or K♦. Seat 1 got 9♦,
+      // so the musik 10♦ must have gone to seat 2, and 10♣ stayed with seat 0.
+      expect(maskIds(deal.s.excluded[0])).toBe('A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ A♠')
+      expect(deal.s.voids[0][Color.Karo]).toBe(false)
+      const view = deal.viewFor(1)
+      const random = seededRandom(28)
+      const withDeclarer = new Map<string, number>()
+      const runs = 3000
+      for (let i = 0; i < runs; i++) {
+        const sample = sampleDeal(view, random)
+        expect(sample.hand(2)).toContain(cards('10♦')[0])
+        expect(sample.s.gifts).toContainEqual({ to: 2, card: cards('10♦')[0] })
+        for (const card of cards('10♣ K♠')) expect(sample.hand(0)).toContain(card)
+        for (const card of sample.hand(0)) {
+          withDeclarer.set(card.id, (withDeclarer.get(card.id) ?? 0) + 1)
+        }
+      }
+      // The declarer's two other cards are a uniform pick of the five free ones.
+      for (const id of ['A♣', 'K♣', 'Q♣', 'J♣', 'J♠']) {
+        expect(Math.abs((withDeclarer.get(id) ?? 0) / runs - 2 / 5)).toBeLessThan(0.04)
+      }
+    })
+  })
+
   it('matches the exact posterior of the gift model in tight endgames', () => {
     const random = seededRandom(25)
     let checked = 0
-    for (let n = 0; checked < 6 && n < 400; n++) {
+    let partial = 0
+    for (let n = 0; checked < 8 && n < 600; n++) {
       const deal = Deal.deal(n % 3, Deck.shuffle(Deck.generate(), random))
       while (!deal.isFinished && (deal.phase !== 'play' || deal.trickNumber < 5)) {
         deal.apply(randomAction(deal, random))
@@ -440,8 +521,21 @@ describe('sampleDeal', () => {
       const viewer = deal.turn === deal.declarer ? nextOf(deal.declarer) : deal.turn
       const view = deal.viewFor(viewer)
       const exact = exactPosterior(view)
-      const voids = deal.s.voids.some((row, p) => p !== viewer && row.some(Boolean))
-      if (!exact || !voids) continue
+      const hidden = [0, 1, 2].filter(p => p !== viewer)
+      if (!exact || hidden.every(p => !deal.s.excluded[p])) continue
+      // Count views where some exclusion is not a whole suit (overtaking rule).
+      if (
+        hidden.some(p =>
+          COLORS.some(color => {
+            const lacked = ALL_CARDS.filter(
+              c => c.color === color && lacks(deal, p, c),
+            ).length
+            return lacked > 0 && lacked < 6
+          }),
+        )
+      ) {
+        partial++
+      }
       const runs = 4000
       const withDeclarer = new Map<Card, number>()
       for (let i = 0; i < runs; i++) {
@@ -457,7 +551,8 @@ describe('sampleDeal', () => {
       }
       checked++
     }
-    expect(checked).toBe(6)
+    expect(checked).toBe(8)
+    expect(partial).toBeGreaterThanOrEqual(3)
   }, 60_000)
 
   it('places known marriage partners with their holder', () => {
@@ -485,7 +580,7 @@ describe('sampleDeal', () => {
     }
   })
 
-  it('relaxes impossible void constraints instead of throwing', () => {
+  it('relaxes impossible constraints instead of throwing', () => {
     const deal = Deal.deal(0, Deck.shuffle(Deck.generate(), seededRandom(22)))
     run(deal, 'pass, pass, take')
     const declarer = deal.declarer
@@ -496,5 +591,9 @@ describe('sampleDeal', () => {
     const sample = sampleDeal(view, seededRandom(23))
     expectComplete(sample)
     expect(sample.hand(declarer).length).toBe(deal.hand(declarer).length)
+    // The same with every card excluded instead.
+    const excluded = deal.viewFor(0)
+    excluded.s.excluded = [0xffffff, 0xffffff, 0xffffff]
+    expectComplete(sampleDeal(excluded, seededRandom(23)))
   })
 })

@@ -160,11 +160,18 @@ for (const color of COLORS) {
 /** Shared immutable instances; every deal uses the same 24 card objects. */
 export const ALL_CARDS: readonly Card[] = ALL
 
-const INDEX = new Map<Card, number>(ALL.map((value, i) => [value, i]))
-
-/** Position in `ALL_CARDS` (♥ ♦ ♣ ♠, each from the ace down); bit index in masks. */
+/**
+ * Position in `ALL_CARDS` (♥ ♦ ♣ ♠, each from the ace down); bit index in
+ * card masks such as `DealState.excluded`. Equal card objects share it.
+ */
 export function cardIndex(value: Card): number {
-  return INDEX.get(value)!
+  return (value.color - Color.Kier) * FIGURES.length + FIGURES.length - 1 - value.rank
+}
+
+/** Mask of the cards of `color` ranked above `rank` (the whole suit by default). */
+export function suitMask(color: Color, rank = -1): number {
+  const ace = (color - Color.Kier) * FIGURES.length
+  return ((1 << (FIGURES.length - 1 - rank)) - 1) << ace
 }
 
 export function card(figure: Figure, color: Color): Card {

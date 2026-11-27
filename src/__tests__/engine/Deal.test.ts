@@ -9,7 +9,7 @@ import {
 import { Deck } from '../../engine/Deck'
 import { seededRandom } from '../../engine/random'
 import { cardPoints } from '../../engine/rules'
-import { dealWith, expectComplete, ids, run } from './helpers'
+import { dealWith, expectComplete, ids, maskIds, run } from './helpers'
 
 /** Seat 0 holds the ♥ marriage and wins every trick (dealer 2, opener 0). */
 function slamDeal(): Deal {
@@ -35,15 +35,30 @@ function threeMarriagesDeal(): Deal {
 const THREE_MARRIAGES_AUCTION = '110, pass, 120, 130, pass'
 const THREE_MARRIAGES_SETUP = `${THREE_MARRIAGES_AUCTION}, take, g9♥>0, gJ♠>1, c130`
 const THREE_MARRIAGES_TRICKS = [
-  'A♣, J♣, 9♦',
   'Q♠, A♠, 9♠',
   'K♦, J♦, A♦',
   'K♠, Q♦, J♠',
-  '9♥, A♥, 9♣',
-  'Q♥, 10♣, J♥',
-  'K♥, K♣, 10♦',
-  '10♥, 10♠, Q♣',
+  '9♥, 10♥, 9♣',
+  'Q♥, K♣, J♥',
+  '9♦, 10♠, 10♦',
+  'J♣, K♥, 10♣',
+  'A♥, A♣, Q♣',
 ]
+
+/**
+ * Dealer 2: seat 0 declares at 100 and plays for 150 with the ♠ and ♣
+ * marriages. After the gifts seat 0 holds K♠ Q♠ K♣ Q♣ 10♣ 9♣ Q♥ J♦, seat 1
+ * A♥ 10♥ K♥ J♥ A♦ K♦ 9♦ 9♠ and seat 2 A♠ 10♠ J♠ A♣ J♣ Q♦ 10♦ 9♥.
+ */
+function overtakingDeal(): Deal {
+  const deal = dealWith(
+    2,
+    ['Q♠ K♠ Q♥ 9♣ J♦ K♣ Q♣', '9♠ A♥ 10♥ K♥ J♥ A♦ K♦', 'A♠ 10♠ J♠ 9♥ A♣ J♣ Q♦'],
+    '10♣ 9♦ 10♦',
+  )
+  run(deal, 'pass, pass, take, g9♦>1, g10♦>2, c150')
+  return deal
+}
 
 function events(deal: Deal, action: Action): string[] {
   return deal.apply(action).map(event => event.type)
@@ -317,38 +332,19 @@ describe('Deal', () => {
   })
 
   describe('play', () => {
-    it('plays a full deal: tricks, three marriages, trump changes and failed contract', () => {
+    it('plays a full deal: a first-trick marriage, trump changes and a failed contract', () => {
       const deal = threeMarriagesDeal()
       run(deal, THREE_MARRIAGES_SETUP)
       expect(deal.phase).toBe('play')
       expect(deal.trump).toBeNull()
+      expect(deal.s.excluded).toEqual([0, 0, 0])
 
-      // Trick 0: no marriage can be declared yet.
+      // Trick 0: the declarer may declare a marriage at once (♠, 40).
       expect(deal.turn).toBe(2)
-      expect(deal.isMeld(cards('K♠')[0])).toBe(false)
-      expect(deal.isMeld(cards('Q♠')[0])).toBe(false)
-      expect(deal.playableCards()).toEqual(deal.hand(2))
-      expect(events(deal, { type: 'play', card: cards('A♣')[0] })).toEqual(['play'])
-      expect(deal.turn).toBe(0)
-      expect(ids(deal.playableCards())).toBe('Q♣ J♣')
-      run(deal, 'J♣')
-      // Seat 1 has no clubs and there is no trump: any card.
-      expect(deal.playableCards()).toEqual(deal.hand(1))
-      expect(events(deal, { type: 'play', card: cards('9♦')[0] })).toEqual([
-        'play',
-        'trick',
-      ])
-      expect(deal.trickNumber).toBe(1)
-      expect(deal.turn).toBe(2)
-      expect(deal.trick).toEqual([])
-      expect(deal.s.lastTrick?.winner).toBe(2)
-      expect(ids(deal.s.lastTrick!.plays.map(p => p.card))).toBe('A♣ J♣ 9♦')
-      expect(deal.s.voids[1][Color.Trefl]).toBe(true)
-
-      // Trick 1: leading Q♠ with K♠ in hand declares ♠ (40) and makes it trump.
-      expect(deal.isMeld(cards('Q♠')[0])).toBe(true)
       expect(deal.isMeld(cards('K♠')[0])).toBe(true)
-      expect(deal.isMeld(cards('A♦')[0])).toBe(false)
+      expect(deal.isMeld(cards('Q♠')[0])).toBe(true)
+      expect(deal.isMeld(cards('A♣')[0])).toBe(false)
+      expect(deal.playableCards()).toEqual(deal.hand(2))
       expect(deal.apply({ type: 'play', card: cards('Q♠')[0] })).toEqual([
         { type: 'play', player: 2, card: cards('Q♠')[0] },
         { type: 'meld', player: 2, color: Color.Pik, points: 40 },
@@ -356,13 +352,25 @@ describe('Deal', () => {
       expect(deal.trump).toBe(Color.Pik)
       expect(deal.s.knownHolders).toEqual({ 'K♠': 2 })
       expect(deal.meldPointsOf(2)).toBe(40)
-      // Following with a marriage card never declares it.
+      // Seat 0 must beat the queen; seat 1 cannot beat the ace: any spade.
+      expect(deal.turn).toBe(0)
+      expect(ids(deal.playableCards())).toBe('A♠')
       run(deal, 'A♠')
+      expect(ids(deal.playableCards())).toBe('J♠ 9♠')
+      // Following with a marriage card never declares it.
       expect(deal.isMeld(cards('J♠')[0])).toBe(false)
-      run(deal, '9♠')
+      expect(events(deal, { type: 'play', card: cards('9♠')[0] })).toEqual([
+        'play',
+        'trick',
+      ])
+      expect(deal.trickNumber).toBe(1)
+      expect(deal.trick).toEqual([])
       expect(deal.s.lastTrick?.winner).toBe(0)
+      expect(ids(deal.s.lastTrick!.plays.map(p => p.card))).toBe('Q♠ A♠ 9♠')
+      // Nothing ranks above an ace: following under it reveals nothing.
+      expect(deal.s.excluded).toEqual([0, 0, 0])
 
-      // Trick 2: seat 0 declares ♦ (80); trump switches from ♠ to ♦.
+      // Trick 1: seat 0 declares ♦ (80); trump switches from ♠ to ♦.
       expect(deal.turn).toBe(0)
       expect(events(deal, { type: 'play', card: cards('K♦')[0] })).toEqual([
         'play',
@@ -370,10 +378,16 @@ describe('Deal', () => {
       ])
       expect(deal.trump).toBe(Color.Karo)
       expect(deal.s.knownHolders).toEqual({ 'K♠': 2, 'Q♦': 0 })
-      run(deal, 'J♦, A♦')
+      // Seat 1 cannot beat the king: any diamond, showing it has no higher one.
+      expect(ids(deal.playableCards())).toBe('J♦ 9♦')
+      run(deal, 'J♦')
+      expect(maskIds(deal.s.excluded[1])).toBe('A♦ 10♦')
+      expect(ids(deal.playableCards())).toBe('A♦')
+      run(deal, 'A♦')
       expect(deal.s.lastTrick?.winner).toBe(2)
 
-      // Trick 3: K♠ no longer declares (Q♠ is gone); seat 0 must ruff with ♦.
+      // Trick 2: K♠ no longer declares (Q♠ is gone); seat 0 has no spade and
+      // must trump, with either trump since none is in the trick yet.
       expect(deal.isMeld(cards('K♠')[0])).toBe(false)
       run(deal, 'K♠')
       expect(deal.s.knownHolders).toEqual({ 'Q♦': 0 })
@@ -385,49 +399,181 @@ describe('Deal', () => {
       expect(deal.s.lastTrick?.winner).toBe(0)
       expect(deal.s.voids[0][Color.Pik]).toBe(true)
       expect(deal.s.voids[0][Color.Karo]).toBe(false)
+      expect(maskIds(deal.s.excluded[0])).toBe('A♠ 10♠ K♠ Q♠ J♠ 9♠')
 
-      // Trick 4: seat 2 has neither hearts nor diamonds (trump).
-      run(deal, '9♥, A♥')
+      // Trick 3: every heart of seat 1 beats 9♥; seat 2 has neither hearts nor
+      // trumps (none in the trick), so it is void in both.
+      run(deal, '9♥')
+      expect(ids(deal.playableCards())).toBe('A♥ 10♥ K♥ Q♥')
+      run(deal, '10♥')
       expect(deal.playableCards()).toEqual(deal.hand(2))
       run(deal, '9♣')
       expect(deal.s.voids[2][Color.Kier]).toBe(true)
       expect(deal.s.voids[2][Color.Karo]).toBe(true)
       expect(deal.s.lastTrick?.winner).toBe(1)
 
-      // Tricks 5–7: seat 1 declares ♥ (100), replacing ♦ as trump.
-      run(deal, THREE_MARRIAGES_TRICKS.slice(5).join(', '))
+      // Trick 4: seat 1 declares ♥ (100), replacing ♦ as trump; seat 0 cannot
+      // beat the queen and shows it has no higher heart.
+      run(deal, 'Q♥, K♣')
       expect(deal.trump).toBe(Color.Kier)
-      expect(deal.s.melds).toEqual([
-        { player: 2, color: Color.Pik, points: 40, trick: 1 },
-        { player: 0, color: Color.Karo, points: 80, trick: 2 },
-        { player: 1, color: Color.Kier, points: 100, trick: 5 },
-      ])
+      expect(ids(deal.playableCards())).toBe('J♥')
+      run(deal, 'J♥')
+      expect(maskIds(deal.s.excluded[0])).toBe('A♥ 10♥ K♥ A♠ 10♠ K♠ Q♠ J♠ 9♠')
 
+      // Trick 5: seat 0 must beat 9♦ with its only diamond.
+      run(deal, '9♦, 10♠')
+      expect(ids(deal.playableCards())).toBe('10♦')
+      run(deal, '10♦')
+      // Trick 6: seat 1 must trump the club lead; the trick is trumped, so seat
+      // 2 may play either club.
+      run(deal, 'J♣')
+      expect(ids(deal.playableCards())).toBe('A♥ K♥')
+      run(deal, 'K♥')
+      expect(ids(deal.playableCards())).toBe('A♣ 10♣')
+      run(deal, `10♣, ${THREE_MARRIAGES_TRICKS[7]}`)
+
+      expect(deal.s.melds).toEqual([
+        { player: 2, color: Color.Pik, points: 40, trick: 0 },
+        { player: 0, color: Color.Karo, points: 80, trick: 1 },
+        { player: 1, color: Color.Kier, points: 100, trick: 4 },
+      ])
       expect(deal.phase).toBe('finished')
       expect(deal.isFinished).toBe(true)
       expect(deal.legalActions()).toEqual([])
       expect(deal.playableCards()).toEqual([])
       expect(deal.trickNumber).toBe(8)
-      expect(deal.s.tricksWon).toEqual([2, 4, 2])
-      expect([0, 1, 2].map(p => deal.cardPointsOf(p))).toEqual([23, 67, 30])
-      expect([0, 1, 2].map(p => deal.pointsOf(p))).toEqual([103, 167, 70])
+      expect(deal.s.tricksWon).toEqual([3, 4, 1])
+      expect([0, 1, 2].map(p => deal.cardPointsOf(p))).toEqual([43, 60, 17])
+      expect([0, 1, 2].map(p => deal.pointsOf(p))).toEqual([123, 160, 57])
       expect(deal.s.voids.map(row => row.slice(1))).toEqual([
         [true, false, false, true],
         [false, false, true, false],
         [true, true, false, false],
       ])
+      expect(deal.s.excluded.map(maskIds)).toEqual([
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♠ 10♠ K♠ Q♠ J♠ 9♠',
+        'A♦ 10♦ A♣ 10♣ K♣ Q♣ J♣ 9♣',
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦ J♦ 9♦',
+      ])
       expect(deal.result()).toEqual({
         declarer: 2,
         contract: 130,
         made: false,
-        cardPoints: [23, 67, 30],
+        cardPoints: [43, 60, 17],
         meldPoints: [80, 100, 40],
-        points: [103, 167, 70],
-        deltas: [100, 170, -130],
+        points: [123, 160, 57],
+        deltas: [120, 160, -130],
       })
       expect(deal.s.played).toHaveLength(24)
       expect(deal.s.taken.flat()).toHaveLength(24)
       expect(cardPoints(deal.s.taken.flat())).toBe(120)
+    })
+
+    it('applies the overtaking rule and records what each card reveals', () => {
+      const deal = overtakingDeal()
+      const playable = () => ids(deal.playableCards())
+      const excluded = () => deal.s.excluded.map(maskIds)
+      expect(deal.contract).toBe(150)
+
+      // Trick 0: ♠ marriage. Seat 1 cannot beat the queen and has no higher
+      // spade; seat 2 must beat it with either higher spade.
+      run(deal, 'Q♠')
+      expect(deal.trump).toBe(Color.Pik)
+      expect(playable()).toBe('9♠')
+      run(deal, '9♠')
+      expect(playable()).toBe('A♠ 10♠')
+      run(deal, 'A♠')
+      expect(excluded()).toEqual(['', 'A♠ 10♠ K♠', ''])
+
+      // Trick 1: seat 1 must beat the queen, the winning card, not just 9♥.
+      run(deal, '9♥')
+      expect(playable()).toBe('Q♥')
+      run(deal, 'Q♥')
+      expect(playable()).toBe('A♥ 10♥ K♥')
+      run(deal, 'K♥')
+      expect(excluded()).toEqual(['', 'A♠ 10♠ K♠', ''])
+
+      // Trick 2: seat 2 has no heart and must trump, with either trump. Seat 0
+      // cannot beat 10♠ with K♠ and need not under-trump: any card.
+      run(deal, 'J♥')
+      expect(playable()).toBe('10♠ J♠')
+      run(deal, '10♠')
+      expect(playable()).toBe('10♣ K♣ Q♣ 9♣ J♦ K♠')
+      run(deal, '9♣')
+      // Seat 0 is void in hearts and has no trump above 10♠; it may still hold K♠.
+      expect(excluded()).toEqual([
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♠',
+        'A♠ 10♠ K♠',
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥',
+      ])
+      expect(deal.s.voids.map(row => row.slice(1))).toEqual([
+        [true, false, false, false],
+        [false, false, false, false],
+        [true, false, false, false],
+      ])
+      expect(deal.s.lastTrick?.winner).toBe(2)
+
+      // Trick 3: seat 0 follows below the queen; seat 1 must beat it.
+      run(deal, 'Q♦')
+      expect(playable()).toBe('J♦')
+      run(deal, 'J♦')
+      expect(maskIds(deal.s.excluded[0])).toBe('A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ A♠')
+      expect(playable()).toBe('A♦ K♦')
+      run(deal, 'K♦')
+
+      // Trick 4: seat 2 trumps with J♠; seat 0 must over-trump with K♠.
+      run(deal, '10♥')
+      expect(playable()).toBe('J♠')
+      run(deal, 'J♠')
+      expect(playable()).toBe('K♠')
+      run(deal, 'K♠')
+      expect(deal.s.lastTrick?.winner).toBe(0)
+
+      // Trick 5: the ♣ marriage makes clubs trump. Seat 1 has no club, so no
+      // trump either: any card. Seat 2 must beat the king.
+      expect(deal.isMeld(cards('K♣')[0])).toBe(true)
+      run(deal, 'K♣')
+      expect(deal.trump).toBe(Color.Trefl)
+      expect(playable()).toBe('A♥ A♦ 9♦')
+      run(deal, 'A♥')
+      expect(deal.s.voids[1][Color.Trefl]).toBe(true)
+      expect(playable()).toBe('A♣')
+      run(deal, 'A♣')
+
+      // Trick 6: seat 0 trumps the diamond lead; the trick is trumped, so seat 1
+      // may keep its ace and reveals nothing.
+      run(deal, '10♦')
+      expect(playable()).toBe('10♣ Q♣')
+      run(deal, 'Q♣')
+      expect(playable()).toBe('A♦ 9♦')
+      run(deal, '9♦')
+      expect(maskIds(deal.s.excluded[1])).toBe('A♣ 10♣ K♣ Q♣ J♣ 9♣ A♠ 10♠ K♠')
+
+      run(deal, '10♣, A♦, J♣')
+      expect(excluded()).toEqual([
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦ J♦ 9♦ A♠',
+        'A♣ 10♣ K♣ Q♣ J♣ 9♣ A♠ 10♠ K♠',
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♣',
+      ])
+      expect(deal.s.voids.map(row => row.slice(1))).toEqual([
+        [true, true, false, false],
+        [false, false, true, false],
+        [true, false, false, false],
+      ])
+      expect(deal.s.melds).toEqual([
+        { player: 0, color: Color.Pik, points: 40, trick: 0 },
+        { player: 0, color: Color.Trefl, points: 60, trick: 5 },
+      ])
+      expect(deal.s.tricksWon).toEqual([3, 2, 3])
+      expect(deal.result()).toEqual({
+        declarer: 0,
+        contract: 150,
+        made: true,
+        cardPoints: [52, 16, 52],
+        meldPoints: [100, 0, 0],
+        points: [152, 16, 52],
+        deltas: [150, 20, 50],
+      })
     })
 
     it('plays a slam: the declarer makes a 220 contract with its marriage', () => {
@@ -509,14 +655,22 @@ describe('Deal', () => {
     it('records voids for failing to trump only when a trump is declared', () => {
       const deal = slamDeal()
       run(deal, 'pass, pass, take, g9♦>1, gJ♦>2, c100')
-      // Trick 0 without trump: seat 2 discards a club on hearts.
+      // Trick 0 without trump: seat 2 discards a club on hearts; seat 1 follows
+      // under the ace, which reveals nothing.
       run(deal, 'A♥, J♥, 9♣')
       expect(deal.s.voids[2].slice(1)).toEqual([true, false, false, false])
-      // ♥ becomes trump; spades led: seat 2 has no ♠ and no ♥, so both voids.
+      expect(deal.s.excluded.map(maskIds)).toEqual(['', '', 'A♥ 10♥ K♥ Q♥ J♥ 9♥'])
+      // ♥ becomes trump; seat 1 follows under the queen (no higher heart). Then
+      // spades are led: seat 2 has no ♠ and, with no trump in the trick, no ♥.
       run(deal, 'Q♥, 9♥, J♣, A♠, Q♠, 10♣')
       expect(deal.trump).toBe(Color.Kier)
       expect(deal.s.voids[2].slice(1)).toEqual([true, false, false, true])
       expect(deal.s.voids[1].every(value => !value)).toBe(true)
+      expect(deal.s.excluded.map(maskIds)).toEqual([
+        '',
+        'A♥ 10♥ K♥',
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♠ 10♠ K♠ Q♠ J♠ 9♠',
+      ])
     })
   })
 
@@ -641,7 +795,9 @@ describe('Deal', () => {
       ;(view.hand(0) as Card[]).pop()
       view.s.bids[0] = 999
       view.s.voids[0][1] = true
+      view.s.excluded[0] = 1
       expect(deal.hand(0)).toHaveLength(7)
+      expect(deal.s.excluded[0]).toBe(0)
       expect(deal.s.bids[0]).toBeNull()
       expect(deal.s.voids[0][1]).toBe(false)
       const clone = deal.clone()
@@ -683,23 +839,27 @@ describe('Deal', () => {
       const deal = threeMarriagesDeal()
       run(
         deal,
-        `${THREE_MARRIAGES_SETUP}, ${THREE_MARRIAGES_TRICKS.slice(0, 2).join(', ')}, K♦`,
+        `${THREE_MARRIAGES_SETUP}, ${THREE_MARRIAGES_TRICKS.slice(0, 2).join(', ')}, K♠`,
       )
-      const view = deal.viewFor(1)
+      const view = deal.viewFor(0)
       expect(view.s.played).toEqual(deal.s.played)
       expect(view.trick).toEqual(deal.trick)
       expect(view.s.lastTrick).toEqual(deal.s.lastTrick)
       expect(view.s.taken).toEqual(deal.s.taken)
       expect(view.s.melds).toEqual(deal.s.melds)
-      expect(view.s.knownHolders).toEqual({ 'K♠': 2, 'Q♦': 0 })
+      expect(view.s.knownHolders).toEqual({ 'Q♦': 0 })
       expect(view.s.voids).toEqual(deal.s.voids)
+      expect(view.s.excluded).toEqual(deal.s.excluded)
+      expect(maskIds(view.s.excluded[1])).toBe('A♦ 10♦')
       expect(view.trump).toBe(Color.Karo)
+      expect(ids(view.playableCards())).toBe('10♦ Q♦')
       expect(view.playableCards()).toEqual(deal.playableCards())
-      expect(view.isMeld(cards('Q♥')[0])).toBe(false)
-      expect([0, 1, 2].map(p => view.handCount(p))).toEqual([5, 6, 6])
-      // Seat 0 cannot see seat 1's options in its own view.
-      expect(deal.viewFor(0).playableCards()).toEqual([])
-      expect(deal.viewFor(0).legalActions()).toEqual([])
+      // Following never declares a marriage.
+      expect(view.isMeld(cards('Q♦')[0])).toBe(false)
+      expect([0, 1, 2].map(p => view.handCount(p))).toEqual([6, 6, 5])
+      // Seat 1 cannot see seat 0's options in its own view.
+      expect(deal.viewFor(1).playableCards()).toEqual([])
+      expect(deal.viewFor(1).legalActions()).toEqual([])
     })
   })
 

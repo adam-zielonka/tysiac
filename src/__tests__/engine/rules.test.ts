@@ -1,8 +1,11 @@
-import { Color, cards } from '../../engine/Card'
+import { ALL_CARDS, COLORS, Card, Color, cardIndex, cards } from '../../engine/Card'
+import { Deck } from '../../engine/Deck'
+import { seededRandom } from '../../engine/random'
 import {
   BASE_MAX_BID,
   BID_STEP,
   HAND_SIZE,
+  LOCK_SCORE,
   MARRIAGE_POINTS,
   MUSIK_SIZE,
   OPENING_BID,
@@ -12,6 +15,7 @@ import {
   beats,
   bidRange,
   cardPoints,
+  excludedByPlay,
   hasCard,
   isMeldLead,
   legalPlays,
@@ -22,7 +26,7 @@ import {
   roundScore,
   trickWinnerIndex,
 } from '../../engine/rules'
-import { ids } from './helpers'
+import { ids, maskIds } from './helpers'
 
 const [AH, TEN_H, KH, QH, JH, NINE_H] = cards('A♥ 10♥ K♥ Q♥ J♥ 9♥')
 
@@ -31,8 +35,8 @@ describe('rules', () => {
     expect(PLAYER_COUNT).toBe(3)
     expect(PLAYER_COUNT * HAND_SIZE + MUSIK_SIZE).toBe(24)
     expect(TRICK_COUNT * PLAYER_COUNT).toBe(24)
-    expect([OPENING_BID, BID_STEP, BASE_MAX_BID, TARGET_SCORE]).toEqual([
-      100, 10, 120, 1000,
+    expect([OPENING_BID, BID_STEP, BASE_MAX_BID, TARGET_SCORE, LOCK_SCORE]).toEqual([
+      100, 10, 120, 1000, 800,
     ])
     expect(MARRIAGE_POINTS).toEqual({
       [Color.Kier]: 100,
@@ -83,6 +87,7 @@ describe('rules', () => {
   it('finds marriages and their value', () => {
     expect(hasCard(cards('K♥ Q♥'), KH)).toBe(true)
     expect(hasCard(cards('K♥ Q♥'), AH)).toBe(false)
+    expect(hasCard(cards('K♥ Q♥'), new Card(KH.figure, KH.color))).toBe(true)
     expect(marriagesIn(cards('K♥ A♠ Q♥ K♠ J♠ Q♦'))).toEqual([Color.Kier])
     expect(marriagesIn(cards('Q♠ K♣ K♠ Q♣ K♦ Q♦ K♥ Q♥'))).toEqual([
       Color.Kier,
@@ -117,19 +122,52 @@ describe('rules', () => {
       expect(legalPlays(hand, [], null)).not.toBe(hand)
     })
 
-    it('forces following the led suit without forcing to overtake', () => {
-      expect(ids(legalPlays(hand, cards('10♥'), null))).toBe('A♥ 9♥')
+    it('forces following the led suit and beating the winning card when possible', () => {
+      expect(ids(legalPlays(hand, cards('10♥'), null))).toBe('A♥')
+      expect(ids(legalPlays(hand, cards('J♥'), Color.Pik))).toBe('A♥')
+      expect(ids(legalPlays(cards('A♥ 10♥ K♥ 9♥ Q♠'), cards('Q♥'), null))).toBe(
+        'A♥ 10♥ K♥',
+      )
+      // The winning card counts, not the led one.
+      expect(ids(legalPlays(hand, cards('J♣ Q♣'), Color.Kier))).toBe('10♣')
+      expect(ids(legalPlays(hand, cards('Q♣ 9♣'), null))).toBe('10♣')
+      // Unable to beat it: any card of the led suit.
       expect(ids(legalPlays(hand, cards('J♣ A♣'), Color.Kier))).toBe('10♣ J♣')
+      expect(ids(legalPlays(cards('K♥ J♥ 9♥ A♠'), cards('A♥'), null))).toBe('K♥ J♥ 9♥')
       // Following beats trumping even when a trump is held.
       expect(ids(legalPlays(hand, cards('A♦'), Color.Kier))).toBe('K♦')
+      expect(ids(legalPlays(hand, cards('Q♦'), Color.Kier))).toBe('K♦')
     })
 
-    it('forces a trump when void in the led suit', () => {
+    it('allows any card of the led suit once the trick is trumped', () => {
+      expect(ids(legalPlays(hand, cards('9♣ 9♥'), Color.Kier))).toBe('10♣ J♣')
+      expect(ids(legalPlays(hand, cards('K♣ 10♥'), Color.Kier))).toBe('10♣ J♣')
+    })
+
+    it('forces over-trumping when trumps are led', () => {
+      const trumps = cards('A♦ J♦ 9♦ A♠')
+      expect(ids(legalPlays(trumps, cards('Q♦'), Color.Karo))).toBe('A♦')
+      expect(ids(legalPlays(trumps, cards('10♦ K♦'), Color.Karo))).toBe('A♦')
+      expect(ids(legalPlays(cards('J♦ 9♦ A♠'), cards('Q♦'), Color.Karo))).toBe('J♦ 9♦')
+    })
+
+    it('forces a trump that wins when void in the led suit', () => {
       const noSpades = cards('A♥ 9♥ K♦ 10♣')
+      // No trump in the trick yet: any trump wins.
       expect(ids(legalPlays(noSpades, cards('9♠'), Color.Kier))).toBe('A♥ 9♥')
-      // A trump is forced even if it cannot win the trick.
-      expect(ids(legalPlays(noSpades, cards('9♠ A♥'), Color.Kier))).toBe('A♥ 9♥')
+      expect(ids(legalPlays(noSpades, cards('9♠ A♠'), Color.Kier))).toBe('A♥ 9♥')
       expect(ids(legalPlays(noSpades, cards('9♠ 10♣'), Color.Karo))).toBe('K♦')
+      // A trump in the trick: only a higher trump.
+      expect(ids(legalPlays(noSpades, cards('9♠ 10♥'), Color.Kier))).toBe('A♥')
+      expect(ids(legalPlays(noSpades, cards('9♠ K♥'), Color.Kier))).toBe('A♥')
+      expect(ids(legalPlays(noSpades, cards('9♠ J♦'), Color.Karo))).toBe('K♦')
+    })
+
+    it('does not force an under-trump when no trump can win', () => {
+      const hand2 = cards('K♥ 9♥ K♦ 10♣')
+      expect(legalPlays(hand2, cards('9♠ A♥'), Color.Kier)).toEqual(hand2)
+      expect(legalPlays(hand2, cards('J♠ 10♥'), Color.Kier)).toEqual(hand2)
+      expect(legalPlays(hand2, cards('A♠ A♦'), Color.Karo)).toEqual(hand2)
     })
 
     it('allows any card when void in the led suit and in trumps', () => {
@@ -137,6 +175,103 @@ describe('rules', () => {
       expect(legalPlays(hand2, cards('9♠'), null)).toEqual(hand2)
       expect(legalPlays(hand2, cards('9♠'), Color.Pik)).toEqual(hand2)
       expect(legalPlays(cards('A♥ 9♥'), cards('9♠'), Color.Trefl)).toEqual(cards('A♥ 9♥'))
+      expect(legalPlays(cards('A♥ 9♥'), cards('9♠ 10♣'), Color.Trefl)).toEqual(
+        cards('A♥ 9♥'),
+      )
+    })
+
+    it('always allows at least one card and only cards from the hand', () => {
+      const random = seededRandom(31)
+      for (let n = 0; n < 2000; n++) {
+        const deck = Deck.shuffle(Deck.generate(), random)
+        const hand2 = deck.slice(0, 1 + (n % 8))
+        const trick = deck.slice(8, 8 + (n % 3))
+        const trump = n % 5 === 0 ? null : COLORS[n % 4]
+        const legal = legalPlays(hand2, trick, trump)
+        expect(legal.length).toBeGreaterThan(0)
+        expect(legal.every(card => hand2.includes(card))).toBe(true)
+      }
+    })
+  })
+
+  describe('excludedByPlay', () => {
+    it('reveals nothing for a lead or a card that beats the led-suit winner', () => {
+      expect(excludedByPlay([], Color.Kier, AH)).toBe(0)
+      expect(excludedByPlay(cards('10♥'), null, AH)).toBe(0)
+      expect(excludedByPlay(cards('9♥ J♥'), Color.Pik, QH)).toBe(0)
+      // Nothing beats an ace: following under it reveals nothing.
+      expect(excludedByPlay(cards('A♥'), null, NINE_H)).toBe(0)
+      expect(excludedByPlay(cards('J♥ A♥'), null, NINE_H)).toBe(0)
+    })
+
+    it('excludes the higher cards of the suit after following without beating', () => {
+      expect(maskIds(excludedByPlay(cards('K♥'), null, JH))).toBe('A♥ 10♥')
+      // The current winner counts, not the led card.
+      expect(maskIds(excludedByPlay(cards('J♥ K♥'), null, NINE_H))).toBe('A♥ 10♥')
+      expect(maskIds(excludedByPlay(cards('9♥'), Color.Kier, cards('9♦')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥',
+      )
+      expect(maskIds(excludedByPlay(cards('10♦'), Color.Karo, cards('9♦')[0]))).toBe('A♦')
+    })
+
+    it('reveals nothing about the led suit once the trick is trumped', () => {
+      expect(excludedByPlay(cards('K♥ 9♦'), Color.Karo, JH)).toBe(0)
+    })
+
+    it('reveals a void in the led suit, and in trumps when no trump was played', () => {
+      expect(maskIds(excludedByPlay(cards('K♥'), null, cards('9♠')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥',
+      )
+      expect(maskIds(excludedByPlay(cards('K♥'), Color.Karo, cards('9♠')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦ J♦ 9♦',
+      )
+      // Trumping reveals only the void.
+      expect(maskIds(excludedByPlay(cards('K♥'), Color.Karo, cards('9♦')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥',
+      )
+      expect(maskIds(excludedByPlay(cards('K♥ J♦'), Color.Karo, cards('Q♦')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥',
+      )
+      // Void in trumps when trumps are led.
+      expect(maskIds(excludedByPlay(cards('10♦'), Color.Karo, cards('9♠')[0]))).toBe(
+        'A♦ 10♦ K♦ Q♦ J♦ 9♦',
+      )
+    })
+
+    it('excludes the trumps above a winning trump after discarding or under-trumping', () => {
+      expect(maskIds(excludedByPlay(cards('K♥ J♦'), Color.Karo, cards('9♠')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦ Q♦',
+      )
+      expect(maskIds(excludedByPlay(cards('K♥ Q♦'), Color.Karo, cards('9♦')[0]))).toBe(
+        'A♥ 10♥ K♥ Q♥ J♥ 9♥ A♦ 10♦ K♦',
+      )
+    })
+
+    it('excludes exactly the cards that would have made the play illegal', () => {
+      const random = seededRandom(32)
+      let checked = 0
+      for (let n = 0; n < 1500; n++) {
+        const deck = Deck.shuffle(Deck.generate(), random)
+        const hand2 = deck.slice(0, 1 + (n % 8))
+        const trick = deck.slice(8, 9 + (n % 2))
+        const trump = n % 5 === 0 ? null : COLORS[n % 4]
+        for (const card of legalPlays(hand2, trick, trump)) {
+          const mask = excludedByPlay(trick, trump, card)
+          for (const other of ALL_CARDS) {
+            const excluded = (mask & (1 << cardIndex(other))) !== 0
+            const illegal =
+              !hand2.includes(other) &&
+              !legalPlays([...hand2, other], trick, trump).includes(card)
+            if (excluded !== illegal) {
+              throw new Error(
+                `${card.id} on ${ids(trick)} (trump ${trump}) from ${ids(hand2)}: ${other.id}`,
+              )
+            }
+          }
+          checked++
+        }
+      }
+      expect(checked).toBeGreaterThan(2000)
     })
   })
 
@@ -178,26 +313,24 @@ describe('rules', () => {
   describe('isMeldLead', () => {
     const hand = cards('K♥ Q♥ K♠ J♠ A♦')
 
-    it('declares a marriage by leading its king or queen from the second trick', () => {
-      expect(isMeldLead(hand, KH, 1, true)).toBe(true)
-      expect(isMeldLead(hand, QH, 7, true)).toBe(true)
-    })
-
-    it('does not declare in the first trick', () => {
-      expect(isMeldLead(hand, KH, 0, true)).toBe(false)
-      expect(isMeldLead(hand, QH, 0, true)).toBe(false)
+    it('declares a marriage by leading its king or queen, also in the first trick', () => {
+      expect(isMeldLead(hand, KH, true)).toBe(true)
+      expect(isMeldLead(hand, QH, true)).toBe(true)
     })
 
     it('does not declare when following', () => {
-      expect(isMeldLead(hand, KH, 3, false)).toBe(false)
+      expect(isMeldLead(hand, KH, false)).toBe(false)
+      expect(isMeldLead(hand, QH, false)).toBe(false)
     })
 
     it('needs both partners in hand', () => {
-      expect(isMeldLead(hand, cards('K♠')[0], 3, true)).toBe(false)
-      expect(isMeldLead(cards('K♥ J♥'), KH, 3, true)).toBe(false)
-      expect(isMeldLead(cards('Q♥'), KH, 3, true)).toBe(false)
-      expect(isMeldLead(hand, JH, 3, true)).toBe(false)
-      expect(isMeldLead(hand, AH, 3, true)).toBe(false)
+      expect(isMeldLead(hand, cards('K♠')[0], true)).toBe(false)
+      expect(isMeldLead(cards('K♥ J♥'), KH, true)).toBe(false)
+      expect(isMeldLead(cards('Q♥'), KH, true)).toBe(false)
+      expect(isMeldLead(hand, JH, true)).toBe(false)
+      expect(isMeldLead(hand, AH, true)).toBe(false)
+      // Equal but foreign card objects work too.
+      expect(isMeldLead(hand, new Card(KH.figure, KH.color), true)).toBe(true)
     })
   })
 })
