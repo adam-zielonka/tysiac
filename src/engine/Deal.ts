@@ -1,4 +1,4 @@
-import { ALL_CARDS, Card, Color, cardById, cardIndex } from './Card'
+import { ALL_CARDS, COLORS, Card, Color, cardById, suitMask } from './Card'
 import { Deck } from './Deck'
 import {
   HAND_SIZE,
@@ -10,6 +10,7 @@ import {
   bidRange,
   BID_STEP,
   cardPoints,
+  excludedByPlay,
   isMeldLead,
   legalPlays,
   maxBidFor,
@@ -98,12 +99,16 @@ export interface DealState {
   melds: Meld[]
   /** Every card played this deal, in order, including the current trick. */
   played: Play[]
-  /** Public inference: `voids[player][color]` after failing to follow or trump. */
+  /**
+   * Public inference: `voids[player][color]` once the player has shown it
+   * holds no card of the suit (not following it, or not trumping while no
+   * trump was in the trick). Same as the whole suit being in `excluded`.
+   */
   voids: boolean[][]
   /**
    * Public inference per player: bit `cardIndex(card)` is set for every card
-   * the player provably does not hold (voids, and cards that would have had
-   * to beat the trick under the overtaking rule). Includes all void suits.
+   * the player provably does not hold, i.e. that would have made one of its
+   * plays illegal (`excludedByPlay`). Includes all void suits.
    */
   excluded: number[]
   /** Publicly known holders, e.g. the partner of a declared marriage. */
@@ -198,18 +203,30 @@ export class Deal {
     })
   }
 
+  /** Independent copy (cards and plays are immutable and shared). */
   clone(): Deal {
     const s = this.s
+    // Every field is listed (in the order of `Deal.deal`), which is much
+    // faster than a spread; TypeScript reports a missing one.
     return new Deal({
-      ...s,
+      dealer: s.dealer,
+      phase: s.phase,
+      turn: s.turn,
       hands: s.hands.map(hand => hand.slice()),
       musik: s.musik.slice(),
       musikCards: s.musikCards.slice(),
       bids: s.bids.slice(),
       passed: s.passed.slice(),
+      highestBid: s.highestBid,
+      highestBidder: s.highestBidder,
+      declarer: s.declarer,
+      contract: s.contract,
       gifts: s.gifts.slice(),
+      trump: s.trump,
       trick: s.trick.slice(),
       lastTrick: s.lastTrick,
+      trickNumber: s.trickNumber,
+      leader: s.leader,
       taken: s.taken.map(cards => cards.slice()),
       tricksWon: s.tricksWon.slice(),
       melds: s.melds.slice(),
@@ -217,7 +234,9 @@ export class Deal {
       voids: s.voids.map(row => row.slice()),
       excluded: s.excluded.slice(),
       knownHolders: { ...s.knownHolders },
+      viewer: s.viewer,
       hiddenCounts: s.hiddenCounts ? s.hiddenCounts.slice() : null,
+      musikCount: s.musikCount,
     })
   }
 
@@ -453,32 +472,22 @@ export class Deal {
   }
 
   /**
-   * What a legal follow reveals under the overtaking rule: a player without
-   * the led suit is void in it; one who did not trump has no trump that would
-   * win; one who followed without beating the led-suit winner has no higher
-   * card of that suit.
+   * What a legal follow reveals under the overtaking rule (`excludedByPlay`):
+   * the cards whose presence would have made it illegal. A suit excluded as
+   * a whole is a void (only the void rules exclude a nine).
    */
   private inferFromPlay(player: number, card: Card): void {
     const s = this.s
-    const trick = s.trick.map(play => play.card)
-    const led = trick[0].color
-    const winning = trick[trickWinnerIndex(trick, s.trump)]
-    const exclude = (color: Color, aboveRank = -1) => {
-      for (const other of ALL_CARDS) {
-        if (other.color === color && other.rank > aboveRank) {
-          s.excluded[player] |= 1 << cardIndex(other)
-        }
-      }
-      if (aboveRank < 0) s.voids[player][color] = true
-    }
-    if (card.color !== led) {
-      exclude(led)
-      if (s.trump !== null && s.trump !== led && card.color !== s.trump) {
-        if (winning.color === s.trump) exclude(s.trump, winning.rank)
-        else exclude(s.trump)
-      }
-    } else if (winning.color === led && card.rank < winning.rank) {
-      exclude(led, winning.rank)
+    const mask = excludedByPlay(
+      s.trick.map(play => play.card),
+      s.trump,
+      card,
+    )
+    if (!mask) return
+    const excluded = (s.excluded[player] |= mask)
+    for (const color of COLORS) {
+      const suit = suitMask(color)
+      if ((excluded & suit) === suit) s.voids[player][color] = true
     }
   }
 

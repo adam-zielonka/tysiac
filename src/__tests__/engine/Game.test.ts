@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { cards } from '../../engine/Card'
+import { type Card, cards } from '../../engine/Card'
 import { Deal, type Action } from '../../engine/Deal'
 import { Deck } from '../../engine/Deck'
 import { Game, type HistoryEntry } from '../../engine/Game'
@@ -7,15 +7,34 @@ import type { Player } from '../../engine/Player'
 import { DEFAULT_PLAYERS, createPlayer } from '../../engine/PlayersSelect'
 import { PlayerType } from '../../engine/PlayerType'
 import { seededRandom } from '../../engine/random'
-import { GreedyTestPlayer } from './helpers'
+import { roundScore } from '../../engine/rules'
+import { ChaosPlayer, GreedyTestPlayer } from './helpers'
 
 const BOTS = [PlayerType.Random, PlayerType.Random, PlayerType.Random]
 const WITH_HUMAN = [PlayerType.Human, PlayerType.Random, PlayerType.Random]
 
+const HANDS: Record<string, string> = {
+  /** Aces and the ♥ marriage: wins almost everything. */
+  A: 'A♥ 10♥ K♥ Q♥ A♠ 10♠ A♦',
+  B: 'J♥ 9♥ K♠ Q♠ J♠ 9♠ 10♦',
+  C: 'A♣ 10♣ K♣ Q♣ J♣ 9♣ K♦',
+}
+
+/**
+ * A stacked deck: `deckOf('CAB')` deals hand C to seat 0, A to seat 1 and B to
+ * seat 2. The greedy test players never raise, so the opener (after the
+ * dealer) always plays for 100; as [dealer] declarer, result, deltas:
+ * - ABC: [0] seat 1 fails, 200 / −100 / 0; [1] seat 2 makes, 220 / 0 / 100;
+ *   [2] seat 0 makes, 100 / 20 / 0.
+ * - CAB: [0] seat 1 makes, 0 / 100 / 20; [1] seat 2 fails, 0 / 200 / −100;
+ *   [2] seat 0 makes, 100 / 220 / 0.
+ */
+function deckOf(order: string): Card[] {
+  return cards(`${[...order].map(hand => HANDS[hand]).join(' ')} Q♦ J♦ 9♦`)
+}
+
 /** Seat 0 holds K♥ Q♥ and the aces; the musik is Q♦ J♦ 9♦. */
-const SLAM_DECK = cards(
-  'A♥ 10♥ K♥ Q♥ A♠ 10♠ A♦ J♥ 9♥ K♠ Q♠ J♠ 9♠ 10♦ A♣ 10♣ K♣ Q♣ J♣ 9♣ K♦ Q♦ J♦ 9♦',
-)
+const SLAM_DECK = deckOf('ABC')
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -47,8 +66,10 @@ function useGreedyBots(game: Game): void {
   )
 }
 
-function stackDeck(deck: readonly ReturnType<typeof cards>[number][]): void {
-  vi.spyOn(Deck, 'shuffle').mockImplementation(() => [...deck])
+/** Deals the given decks in turn, then the last one again and again. */
+function stackDeck(...decks: readonly Card[][]): void {
+  const shuffle = vi.spyOn(Deck, 'shuffle').mockImplementation(() => [...decks.at(-1)!])
+  decks.slice(0, -1).forEach(deck => shuffle.mockImplementationOnce(() => [...deck]))
 }
 
 /** Runs bot timers until the deal ends or the human is to act. */
@@ -89,6 +110,13 @@ it('starts in setup with the default players and no timers', () => {
   expect(game.dealNumber).toBe(0)
   expect(game.turn).toBe(-1)
   expect(game.target).toBe(1000)
+  expect(game.lockScore).toBe(800)
+  expect(game.lockedSeats).toEqual([false, false, false])
+  expect(game.players.map(player => player.matchScores)).toEqual([
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ])
   expect(game.thinkDelay).toBe(650)
   expect(game.trickDelay).toBe(1100)
   expect(game.showLastTrick).toBe(false)
@@ -222,9 +250,13 @@ it('plays a deal to the end and records the result', () => {
   useGreedyBots(game)
   runBots(game)
   expect(game.status).toBe('dealEnd')
-  expect(vi.getTimerCount()).toBe(0)
   expect(game.turn).toBe(-1)
+  // The final trick stays on the table for the trick delay.
+  expect(game.showLastTrick).toBe(true)
+  expect(vi.getTimerCount()).toBe(1)
+  vi.advanceTimersByTime(500)
   expect(game.showLastTrick).toBe(false)
+  expect(vi.getTimerCount()).toBe(0)
   const result = game.deal!.result()!
   expect(game.scores).toEqual(result.deltas)
   expect(game.records).toEqual([
@@ -236,6 +268,7 @@ it('plays a deal to the end and records the result', () => {
       made: result.made,
       points: result.points,
       deltas: result.deltas,
+      locked: [false, false, false],
       totals: result.deltas,
     },
   ])
@@ -299,29 +332,57 @@ it('starts the next deal only from the deal end, rotating the dealer', () => {
   expect(game.dealNumber).toBe(3)
 })
 
+/** Checks every record of a match against the scoring rules of this version. */
+function expectRecordsFollowTheRules(game: Game): void {
+  let before = [0, 0, 0]
+  game.records.forEach((record, index) => {
+    expect(record.number).toBe(index + 1)
+    record.points.forEach((points, seat) => {
+      const declarer = seat === record.declarer
+      const locked = !declarer && before[seat] >= 800
+      expect(record.locked[seat]).toBe(locked)
+      const delta = declarer
+        ? record.made
+          ? record.contract
+          : -record.contract
+        : roundScore(points)
+      expect(record.deltas[seat]).toBe(locked ? 0 : delta)
+      expect(record.totals[seat]).toBe(before[seat] + record.deltas[seat])
+    })
+    expect(record.made).toBe(record.points[record.declarer] >= record.contract)
+    // Only the last deal reaches the target.
+    if (index < game.records.length - 1)
+      expect(Math.max(...record.totals)).toBeLessThan(1000)
+    before = record.totals
+  })
+  expect(game.scores).toEqual(before)
+  const last = game.records.at(-1)!
+  const best = Math.max(...game.scores)
+  expect(best).toBeGreaterThanOrEqual(1000)
+  // The declarer who reaches 1000 wins alone; otherwise the highest total.
+  expect(game.winners).toEqual(
+    game.scores[last.declarer] >= 1000
+      ? [last.declarer]
+      : [0, 1, 2].filter(seat => game.scores[seat] === best),
+  )
+}
+
 it('plays a whole match to 1000 and declares the winners', () => {
   const game = newGame(BOTS, { firstDealer: 1 })
   game.startMatch()
   useGreedyBots(game)
   playMatch(game)
   expect(game.status).toBe('gameOver')
+  // The final trick of the match is shown before the summary too.
+  expect(game.showLastTrick).toBe(true)
+  expect(vi.getTimerCount()).toBe(1)
+  vi.advanceTimersByTime(500)
+  expect(game.showLastTrick).toBe(false)
   expect(vi.getTimerCount()).toBe(0)
-  const best = Math.max(...game.scores)
-  expect(best).toBeGreaterThanOrEqual(1000)
-  expect(game.winners).toEqual([0, 1, 2].filter(seat => game.scores[seat] === best))
-  expect(game.leader).toBe(game.scores.indexOf(best))
   expect(game.records).toHaveLength(game.dealNumber)
-  const totals = [0, 0, 0]
-  game.records.forEach((record, index) => {
-    expect(record.number).toBe(index + 1)
-    expect(record.dealer).toBe((1 + index) % 3)
-    record.deltas.forEach((delta, seat) => (totals[seat] += delta))
-    expect(record.totals).toEqual(totals)
-    // Only the last deal reaches the target.
-    if (index < game.records.length - 1)
-      expect(Math.max(...record.totals)).toBeLessThan(1000)
-  })
-  expect(game.scores).toEqual(totals)
+  game.records.forEach((record, index) => expect(record.dealer).toBe((1 + index) % 3))
+  expectRecordsFollowTheRules(game)
+  expect(game.leader).toBe(game.scores.indexOf(Math.max(...game.scores)))
   expect(game.history.length).toBeLessThanOrEqual(80)
   expect(game.history.at(-1)?.kind).toBe('result')
   // A finished match ignores further moves until it is prepared again.
@@ -333,38 +394,120 @@ it('plays a whole match to 1000 and declares the winners', () => {
   expect(game.actionsFor(game.deal!.turn)).toEqual([])
 })
 
-it('shares the win between players tied on the highest total', () => {
-  stackDeck(SLAM_DECK)
-  // Replay the deal with the same deterministic players to learn the deltas.
-  const replay = Deal.deal(0, [...SLAM_DECK])
-  const players = [0, 1, 2].map(seat => new GreedyTestPlayer(seat, seededRandom(seat)))
-  while (!replay.isFinished) {
-    replay.apply(
-      players[replay.turn].choose(replay.viewFor(replay.turn), replay.legalActions()),
+it('plays many seeded matches to 1000 under the 800 lock', () => {
+  let deals = 0
+  let locked = 0
+  let lockedDeclarers = 0
+  for (let match = 0; match < 24; match++) {
+    const game = newGame(BOTS, {
+      firstDealer: match % 3,
+      random: seededRandom(500 + match),
+    })
+    game.startMatch()
+    // Mostly greedy players; a random one in every other match makes contracts vary.
+    game.players = game.players.map((_, seat) =>
+      match % 2 && seat === match % 3
+        ? new ChaosPlayer(seat, seededRandom(900 + match))
+        : new GreedyTestPlayer(seat, seededRandom(seat)),
     )
+    playMatch(game)
+    expect(game.status).toBe('gameOver')
+    expectRecordsFollowTheRules(game)
+    deals += game.records.length
+    let before = [0, 0, 0]
+    for (const record of game.records) {
+      locked += record.locked.filter(Boolean).length
+      if (before[record.declarer] >= 800) lockedDeclarers++
+      before = record.totals
+    }
   }
-  const deltas = replay.result()!.deltas
+  expect(deals).toBeGreaterThan(300)
+  expect(locked).toBeGreaterThan(50)
+  expect(lockedDeclarers).toBeGreaterThan(20)
+}, 60_000)
 
+it('locks defenders at 800 or more while the declarer still plays for the contract', () => {
+  stackDeck(deckOf('ABC'), deckOf('CAB'))
   const game = newGame(BOTS, { firstDealer: 0 })
   game.startMatch()
   useGreedyBots(game)
-  const final = [1000, 700, 1000]
-  game.scores = final.map((score, seat) => score - deltas[seat])
+  game.scores = [800, 850, 790]
+  expect(game.lockedSeats).toEqual([true, true, false])
   runBots(game)
-  expect(game.scores).toEqual(final)
-  expect(game.status).toBe('gameOver')
-  expect(game.winners).toEqual([0, 2])
+  // Seat 1 declares at 850 and fails; seat 0 would have written 200.
+  expect(game.status).toBe('dealEnd')
+  expect(game.records[0]).toMatchObject({
+    declarer: 1,
+    contract: 100,
+    made: false,
+    points: [199, 61, 0],
+    deltas: [0, -100, 0],
+    locked: [true, false, false],
+    totals: [800, 750, 790],
+  })
+  expect(game.history.at(-1)).toMatchObject({ kind: 'result', player: 1, value: -100 })
+  expect(game.lockedSeats).toEqual([true, false, false])
+  // Back below 800, seat 1 scores as a defender again.
+  game.nextDeal()
+  runBots(game)
+  expect(game.records[1]).toMatchObject({
+    dealer: 1,
+    declarer: 2,
+    made: false,
+    points: [0, 199, 61],
+    deltas: [0, 200, -100],
+    locked: [true, false, false],
+    totals: [800, 950, 690],
+  })
+  expect(game.lockedSeats).toEqual([true, true, false])
 })
 
-it('ends the match with the highest total even if another player passed 1000', () => {
-  stackDeck(SLAM_DECK)
-  const game = newGame(BOTS, { firstDealer: 0 })
+it('lets the declarer who reaches 1000 win even when a defender has more', () => {
+  stackDeck(deckOf('CAB'))
+  const game = newGame(BOTS, { firstDealer: 2 })
   game.startMatch()
   useGreedyBots(game)
-  game.scores = [1500, 990, 990]
+  game.scores = [900, 790, 0]
   runBots(game)
+  expect(game.records[0]).toMatchObject({
+    declarer: 0,
+    made: true,
+    deltas: [100, 220, 0],
+    totals: [1000, 1010, 0],
+  })
   expect(game.status).toBe('gameOver')
   expect(game.winners).toEqual([0])
+})
+
+it('gives the win to the highest total when the declarer stays below 1000', () => {
+  stackDeck(deckOf('CAB'))
+  const game = newGame(BOTS, { firstDealer: 2 })
+  game.startMatch()
+  useGreedyBots(game)
+  game.scores = [500, 790, 0]
+  runBots(game)
+  expect(game.scores).toEqual([600, 1010, 0])
+  expect(game.status).toBe('gameOver')
+  expect(game.winners).toEqual([1])
+  expect(game.leader).toBe(1)
+})
+
+it('shares the win between players tied on the highest total', () => {
+  stackDeck(deckOf('CAB'))
+  const game = newGame(BOTS, { firstDealer: 2 })
+  game.startMatch()
+  useGreedyBots(game)
+  // Set by hand: seat 2 is already at 1000 and locked; seat 1 catches up.
+  game.scores = [800, 780, 1000]
+  runBots(game)
+  expect(game.records[0]).toMatchObject({
+    declarer: 0,
+    deltas: [100, 220, 0],
+    locked: [false, false, true],
+  })
+  expect(game.scores).toEqual([900, 1000, 1000])
+  expect(game.status).toBe('gameOver')
+  expect(game.winners).toEqual([1, 2])
 })
 
 it('keeps playing below the target', () => {
@@ -562,4 +705,179 @@ it('keeps the history short', () => {
   const ids = game.history.map(entry => entry.id)
   expect(ids).toEqual([...ids].sort((a, b) => a - b))
   expect(game.history.at(-1)?.deal).toBe(game.dealNumber)
+})
+
+describe('the pause after the last trick of a deal', () => {
+  /** Plays the slam deal (seat 0 declares) up to its end. */
+  function finishedDeal(players = BOTS): Game {
+    stackDeck(SLAM_DECK)
+    const game = newGame(players, { firstDealer: 2 })
+    game.startMatch()
+    useGreedyBots(game)
+    runBots(game)
+    expect(game.status).toBe('dealEnd')
+    return game
+  }
+
+  it('shows the final trick for the trick delay while the summary is ready', () => {
+    stackDeck(SLAM_DECK)
+    const game = newGame(BOTS, { firstDealer: 2 })
+    game.startMatch()
+    useGreedyBots(game)
+    while (game.deal!.s.played.length < 23) vi.advanceTimersToNextTimer()
+    const notify = vi.fn()
+    game.subscribe(notify)
+    notify.mockClear()
+    vi.advanceTimersToNextTimer()
+    // Scored at once: status, records and the result are final.
+    expect(game.deal!.isFinished).toBe(true)
+    expect(game.status).toBe('dealEnd')
+    expect(game.records).toHaveLength(1)
+    expect(game.turn).toBe(-1)
+    expect(game.showLastTrick).toBe(true)
+    expect(game.deal!.s.lastTrick!.plays).toHaveLength(3)
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(499)
+    expect(game.showLastTrick).toBe(true)
+    vi.advanceTimersByTime(1)
+    expect(game.showLastTrick).toBe(false)
+    expect(notify).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(game.status).toBe('dealEnd')
+  })
+
+  it('never blocks the next deal, and leaves no timer behind', () => {
+    const game = finishedDeal()
+    vi.advanceTimersByTime(200)
+    expect(game.showLastTrick).toBe(true)
+    game.nextDeal()
+    expect(game.status).toBe('playing')
+    expect(game.dealNumber).toBe(2)
+    expect(game.showLastTrick).toBe(false)
+    // Only the first bot move of the new deal is pending.
+    expect(vi.getTimerCount()).toBe(1)
+    const notify = vi.fn()
+    game.subscribe(notify)
+    notify.mockClear()
+    vi.advanceTimersByTime(99)
+    expect(notify).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(game.history.at(-1)?.deal).toBe(2)
+  })
+
+  it('lets a human act at once in the next deal', () => {
+    stackDeck(SLAM_DECK)
+    const game = newGame(WITH_HUMAN, { firstDealer: 0 })
+    game.startMatch()
+    useGreedyBots(game)
+    const human = new GreedyTestPlayer(0, seededRandom(0))
+    while (game.status === 'playing') {
+      if (game.turn === 0) {
+        expect(game.act(0, human.choose(game.deal!.viewFor(0), game.actionsFor(0)))).toBe(
+          true,
+        )
+      } else {
+        vi.advanceTimersToNextTimer()
+      }
+    }
+    expect(game.status).toBe('dealEnd')
+    expect(game.showLastTrick).toBe(true)
+    expect(game.act(0, { type: 'pass' })).toBe(false)
+    game.nextDeal()
+    // Dealer 1: seat 2 opens and the human speaks first.
+    expect(game.turn).toBe(0)
+    expect(game.showLastTrick).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(game.act(0, { type: 'pass' })).toBe(true)
+  })
+
+  it('is cut short by prepare, startMatch and stopTimer', () => {
+    const prepared = finishedDeal()
+    prepared.prepare()
+    expect(prepared.showLastTrick).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+
+    vi.restoreAllMocks()
+    const restarted = finishedDeal()
+    restarted.startMatch()
+    expect(restarted.showLastTrick).toBe(false)
+    expect(restarted.dealNumber).toBe(1)
+    expect(vi.getTimerCount()).toBe(1)
+    vi.clearAllTimers()
+
+    vi.restoreAllMocks()
+    const stopped = finishedDeal()
+    const notify = vi.fn()
+    stopped.subscribe(notify)
+    notify.mockClear()
+    stopped.stopTimer()
+    expect(stopped.showLastTrick).toBe(false)
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+    // Nothing left to stop: no further notification.
+    stopped.stopTimer()
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps its delay when the pace changes meanwhile', () => {
+    const game = finishedDeal()
+    game.setPace(50, 2000)
+    vi.advanceTimersByTime(500)
+    expect(game.showLastTrick).toBe(false)
+  })
+})
+
+it('changes the pace from the next timer on and ignores invalid values', () => {
+  const game = newGame(BOTS)
+  const notify = vi.fn()
+  game.subscribe(notify)
+  game.startMatch()
+  notify.mockClear()
+  game.setPace(300, 900)
+  expect(notify).toHaveBeenCalledTimes(1)
+  expect([game.thinkDelay, game.trickDelay]).toEqual([300, 900])
+  // The pending move keeps its delay of 100 ms; the next one waits 300 ms.
+  const before = game.history.length
+  vi.advanceTimersByTime(100)
+  const after = game.history.length
+  expect(after).toBeGreaterThan(before)
+  vi.advanceTimersByTime(299)
+  expect(game.history.length).toBe(after)
+  vi.advanceTimersByTime(1)
+  expect(game.history.length).toBeGreaterThan(after)
+  game.setPace(-1, Number.NaN)
+  expect([game.thinkDelay, game.trickDelay]).toEqual([300, 900])
+  game.setPace(Infinity, 0)
+  expect([game.thinkDelay, game.trickDelay]).toEqual([300, 0])
+  expect(notify).toHaveBeenCalledTimes(5)
+})
+
+it('tells each bot the match totals before the deal when it decides', () => {
+  const game = newGame(BOTS, { firstDealer: 0 })
+  game.startMatch()
+  useGreedyBots(game)
+  const seen: string[] = []
+  for (const player of game.players) {
+    const choose = player.choose.bind(player)
+    player.choose = (deal, actions) => {
+      seen.push(player.matchScores.join())
+      return choose(deal, actions)
+    }
+  }
+  game.scores = [100, 200, 300]
+  runBots(game)
+  expect(seen.length).toBeGreaterThan(24)
+  expect(new Set(seen)).toEqual(new Set(['100,200,300']))
+  const totals = game.scores.slice()
+  expect(totals).not.toEqual([100, 200, 300])
+  seen.length = 0
+  game.nextDeal()
+  runBots(game)
+  expect(new Set(seen)).toEqual(new Set([totals.join()]))
+  // Each bot gets its own copy.
+  game.players[1].matchScores[1] = 9999
+  expect(game.scores[1]).not.toBe(9999)
+  expect(game.players[2].matchScores[1]).not.toBe(9999)
 })

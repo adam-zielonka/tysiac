@@ -1,4 +1,4 @@
-import { COLORS, Color, Figure, type Card } from './Card'
+import { COLORS, Color, Figure, suitMask, type Card } from './Card'
 
 export const PLAYER_COUNT = 3
 export const HAND_SIZE = 7
@@ -33,8 +33,11 @@ export function roundScore(points: number): number {
   return Math.round(points / 10) * 10
 }
 
+/** Is the card (or an equal card object) in the hand? */
 export function hasCard(hand: readonly Card[], card: Card): boolean {
-  return hand.some(c => c === card)
+  return hand.some(
+    c => c === card || (c.figure === card.figure && c.color === card.color),
+  )
 }
 
 /** Suits in which the hand holds both the king and the queen. */
@@ -81,9 +84,11 @@ export function trickWinnerIndex(trick: readonly Card[], trump: Color | null): n
 }
 
 /**
- * Polish rules: follow the led suit and beat the winning card when possible.
- * Without the led suit, play a trump that wins the trick if you hold one;
- * otherwise any card (nobody is forced to under-trump).
+ * Polish rules: follow the led suit and beat the winning card when possible
+ * (any card of the led suit once the trick is trumped). Without the led suit,
+ * play a trump that wins the trick if you hold one (any trump while none is
+ * in the trick, a higher one when it is); otherwise any card (nobody is
+ * forced to under-trump). Without a declared trump a void allows any card.
  */
 export function legalPlays(
   hand: readonly Card[],
@@ -119,4 +124,30 @@ export function isMeldLead(
   if (!isLeading || !card.isMarriageCard) return false
   const partner = card.marriagePartner
   return !!partner && hasCard(hand, card) && hasCard(hand, partner)
+}
+
+/**
+ * Public inference from a legal follow: the mask (bits `cardIndex`) of every
+ * card whose presence in the hand would have made playing `card` to `trick`
+ * (earlier cards, in play order) illegal. Not following reveals a void in
+ * the led suit; a void player who does not win with a trump has no trump
+ * above the winning one (no trump at all while none is in the trick); a
+ * player who follows without beating a led-suit winner has no higher card of
+ * that suit. Leading reveals nothing.
+ */
+export function excludedByPlay(
+  trick: readonly Card[],
+  trump: Color | null,
+  card: Card,
+): number {
+  if (!trick.length) return 0
+  const led = trick[0].color
+  const winning = trick[trickWinnerIndex(trick, trump)]
+  if (beats(card, winning, trump)) return card.color === led ? 0 : suitMask(led)
+  if (card.color === led) return winning.color === led ? suitMask(led, winning.rank) : 0
+  let mask = suitMask(led)
+  if (trump !== null) {
+    mask |= winning.color === trump ? suitMask(trump, winning.rank) : suitMask(trump)
+  }
+  return mask
 }

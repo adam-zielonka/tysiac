@@ -1,4 +1,4 @@
-import { ALL_CARDS, Card, cards } from '../../engine/Card'
+import { ALL_CARDS, Card, cardIndex, cards } from '../../engine/Card'
 import { Deal, type Action } from '../../engine/Deal'
 import { Player } from '../../engine/Player'
 import { PlayerType } from '../../engine/PlayerType'
@@ -20,6 +20,11 @@ export function dealWith(
 
 export function ids(list: readonly Card[]): string {
   return list.map(card => card.id).join(' ')
+}
+
+/** Card ids of a card mask (bits `cardIndex`, as in `DealState.excluded`), in deck order. */
+export function maskIds(mask: number): string {
+  return ids(ALL_CARDS.filter(card => mask & (1 << cardIndex(card))))
 }
 
 export function sortedIds(list: readonly Card[]): string {
