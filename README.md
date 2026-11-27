@@ -1,0 +1,92 @@
+# Tysiąc
+
+Polska gra karciana dla trzech osób przy jednym wirtualnym stole: licytacja,
+musik, meldunki i partia do 1000 punktów. Grasz z komputerowymi przeciwnikami
+albo obserwujesz ich grę. Interfejs działa na telefonie i komputerze, po polsku
+i po angielsku, z tabelą wyników i historią ruchów.
+
+Zagraj: https://adam-zielonka.github.io/tysiac/
+
+Projekt wyrósł ze stołu i przeciwników gry [PAN](https://github.com/adam-zielonka/pan).
+
+## Wybór graczy
+
+Kliknij fotel przy stole, aby otworzyć kafelki przeciwników z opisami ich
+strategii. Skład wybierasz przed partią; „Rozdaj karty” ją rozpoczyna i blokuje
+zmiany. Własny fotel może też zająć bot — wtedy obserwujesz grę. Domyślnie
+grają Tosia i Bruno. „Nowa partia” w trakcie gry prosi o potwierdzenie, bo
+porzuca bieżący wynik.
+
+## Przeciwnicy
+
+- **Felek — losowy:** pasuje albo podbija o 10 z równą szansą, gra najniższy
+  kontrakt, oddaje losowe karty i zagrywa losową dozwoloną kartę.
+- **Bolek — zachłanny:** licytuje do oceny ręki bez zapasu, oddaje karty warte
+  najmniej punktów, wychodzi najsilniejszą kartą i bierze lewę najtańszą
+  wystarczającą kartą.
+- **Tosia — taktyczna:** licytuje do oceny ręki pomniejszonej o 10 punktów,
+  podnosi kontrakt do oceny ośmiu kart minus 30. Pamięta zagrane karty i to,
+  czego rywale nie mogą mieć, zgrywa pewne lewy, melduje, ściąga atuty, a w
+  obronie dokłada punkty partnerowi. Jej taktyka dogrywa też symulacje Bruna
+  i Montego.
+- **Bruno — płaskie Monte Carlo:** każdą dozwoloną kartę sprawdza na tych samych
+  100 losowych układach ukrytych kart. Licytuje na podstawie 150 symulacji
+  (podbija przy co najmniej 60% szans), kontrakt wybiera z 200 symulacji,
+  oddawane karty porównuje na 60 układach.
+- **Monte — ISMCTS:** 2000 iteracji przeszukiwania drzewa zbiorów informacji
+  z UCT; w każdej losuje ukryte karty. Licytuje jak Bruno, ale już przy 55%.
+- **Ada — alfa-beta:** **zna wszystkie ręce i musik** — to celowo jawny wariant
+  eksperymentalny. Przeszukuje rozgrywkę (rozgrywający przeciw obu obrońcom)
+  do 150 000 pozycji na ruch; od trzeciej lewy zwykle liczy dokładnie do końca.
+
+Boty znają stan partii: przy 800 punktach licytują śmielej (w obronie nic już
+nie zapiszą), przy dużej przewadze ostrożniej i nie podnoszą kontraktu ponad to,
+co wygrywa partię. Uczciwe boty dostają wyłącznie własny widok rozdania:
+swoją rękę, zagrane karty, odkryty musik, zgłoszone meldunki i karty, których
+ktoś nie może mieć (bo nie dołożył do koloru albo nie przebił). Losowane układy
+są z tym widokiem zgodne. Ocena ręki w licytacji to model liniowy dopasowany do
+40 000 symulowanych rozdań.
+
+Orientacyjne wyniki z serii 150 rozdań × 3 obroty foteli (średni zapis na
+rozdanie, każdy bot przeciw dwóm Tosiom): Felek −28, Bolek +28, Bruno +48,
+Monte +47, Ada +64. Bruno i Monte mieszczą się w granicach szumu. To pomiary
+na ustalonych ziarnach losowania, nie skalibrowany ranking siły gry.
+Najdłuższa decyzja botów zajmowała w pomiarach około 120 ms czasu procesora.
+
+## Zasady tej wersji
+
+- **Talia:** 24 karty od 9 do asa. Starszeństwo: A, 10, K, D (Q), W (J), 9;
+  punkty 11, 10, 4, 3, 2, 0 — razem 120.
+- **Rozdanie:** po 7 kart, 3 do musiku. Rozdaje kolejno każdy gracz.
+- **Licytacja:** gracz po rozdającym musi zacząć od 100. Licytuje się
+  wielokrotności 10 (można przeskakiwać), pas jest ostateczny. Powyżej 120 tylko
+  z meldunkiem w ręce, najwyżej do 120 plus wartość posiadanych meldunków.
+- **Musik:** jest pokazywany wszystkim. Grający bierze go, oddaje po jednej
+  karcie rywalom i może podnieść kontrakt.
+- **Lewy:** trzeba dołożyć do koloru i przebić, jeśli się da. Bez koloru trzeba
+  przebić atutem, jeśli któryś atut wygrywa lewę; nikt nie musi podbijać
+  niższym atutem. Grający wychodzi do pierwszej lewy.
+- **Meldunki:** wyjście królem lub damą z pary w ręce — w dowolnej lewie, także
+  pierwszej — zgłasza meldunek automatycznie: ♥ 100, ♦ 80, ♣ 60, ♠ 40.
+  Jego kolor staje się atutem.
+- **Zapis:** grający dostaje kontrakt, jeśli zdobył co najmniej tyle punktów
+  (karty i meldunki), w przeciwnym razie go traci. Obrońcy zapisują swoje
+  punkty zaokrąglone do 10 (5 w górę).
+- **Od 800 punktów** punkty zdobywa się tylko jako grający.
+- **Koniec:** gdy ktoś ma co najmniej 1000. Jeśli dotarł do tego grający,
+  wygrywa on; w przeciwnym razie wygrywa wyższy wynik (remis dzieli wygraną).
+
+Ta wersja pomija bombę, ponowne rozdanie za cztery dziewiątki, grę we czterech,
+rezygnację z meldunku i ukrywanie musiku.
+
+## Development
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for setup, structure and validation.
+The bundled DM Sans font uses the [SIL Open Font License](src/assets/fonts/OFL.txt).
+
+## Language / Język
+
+The browser version supports Polish and English. On the first visit it uses the
+first supported language from the browser’s preferences, falling back to English.
+The Polski / English buttons in Settings save an explicit choice in this
+application’s local storage. Switching language preserves the current game.
